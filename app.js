@@ -392,9 +392,10 @@ $("startEdit").addEventListener("click", async () => {
   const wm = $("wmText").value.trim();
   const wantSub = !!edSrt;
   const wantWm = wm.length > 0;
-  if (wantWm) vf.push("drawtext=text='" + escDrawtext(wm) + "':fontsize=22:fontcolor=white@0.75:x=12:y=h-36");
+  const FONTFILE = "/fonts/NotoSansMyanmar.ttf";
+  if (wantWm) vf.push("drawtext=fontfile=" + FONTFILE + ":text='" + escDrawtext(wm) + "':fontsize=22:fontcolor=white@0.75:x=12:y=h-36");
   if ($("compressChk").checked) vf.push("scale=-2:480");
-  if (wantSub) vf.push("subtitles=subs.srt");
+  if (wantSub) vf.push("subtitles=subs.srt:fontsdir=/fonts:force_style=FontName='Noto Sans Myanmar'");
 
   const baseName = edFileName.replace(/\.[^.]+$/, "");
   try {
@@ -403,6 +404,12 @@ $("startEdit").addEventListener("click", async () => {
     setProgressHandler((p) => setProgress("ed", p * 100, "လုပ်နေပါတယ်… " + Math.round(p * 100) + "%"));
     const files = { "input.mp4": await fetchFile(edFile) };
     if (wantSub) files["subs.srt"] = await fetchFile(edSrt);
+    // Myanmar font for drawtext/subtitles burn-in
+    try { await ff.createDir("/fonts"); } catch (_) {}
+    try {
+      const fr = await fetch("./fonts/NotoSansMyanmar.ttf");
+      if (fr.ok) await ff.writeFile(FONTFILE, new Uint8Array(await fr.arrayBuffer()));
+    } catch (_) {}
     for (const [n, d] of Object.entries(files)) await ff.writeFile(n, d);
 
     let args, dropped = [];
@@ -424,7 +431,7 @@ $("startEdit").addEventListener("click", async () => {
         const subIdx = cur.findIndex((f) => f.startsWith("subtitles="));
         const wmIdx = cur.findIndex((f) => f.startsWith("drawtext="));
         if (subIdx >= 0) {
-          cur.splice(subIdx, 1); dropped.push("စာတန်းထိုး (subtitle font မရှိလို့)");
+          cur.splice(subIdx, 1); dropped.push("စာတန်းထိုး");
           log("ed", "⚠️ subtitle burn-in မရလို့ ကျော်ပြီး ဆက်လုပ်ပါမယ်", "err");
         } else if (wmIdx >= 0) {
           cur.splice(wmIdx, 1); dropped.push("watermark");
@@ -553,7 +560,13 @@ $("startRecap").addEventListener("click", async () => {
     const CHUNK_MB = 15;
     const sizeMB = audioBlob.size / 1048576;
     const audioDur = await mediaDuration(audioBlob).catch(() => 0);
-    const nChunks = Math.max(1, Math.ceil(sizeMB / CHUNK_MB));
+    let nChunks = Math.max(1, Math.ceil(sizeMB / CHUNK_MB));
+    if (audioDur <= 0 && nChunks > 1) {
+      // duration unreadable: time-based split impossible — send once instead of
+      // duplicating the full audio in every chunk
+      nChunks = 1;
+      log("rc", "⚠️ အသံကြာချိန် ဖတ်မရလို့ တစ်ပိုင်းတည်း ပို့ပါမယ်", "err");
+    }
     const chunkDur = audioDur > 0 ? audioDur / nChunks : 0;
     log("rc", `အသံ ${nChunks} ပိုင်း ခွဲပြီး transcribe လုပ်ပါမယ်`);
     await ff.writeFile("taudio.mp3", await fetchFile(audioBlob));
@@ -602,24 +615,24 @@ $("startRecap").addEventListener("click", async () => {
     setStep("script", "run");
     let segments = null;
     try {
-      setProgress("rc", 52, "Scene frames \u1791\u17bb\u178f\u1793\u17c1\u1794\u17d2ប\u2026");
-      log("rc", "3\ufe0f\u20e3 AI \u1780 scene \u178f\u17d2វ\u17c1\u1780\u17d2រ\u17bd\u178f\u17cd\u1793\u17c1\u1794\u17d2ប\u2026 🎬");
+      setProgress("rc", 52, "Scene frames ထုတ်နေပါတယ်…");
+      log("rc", "3️⃣ AI က scene တွေကြည့်နေပါတယ်… 🎬");
       const frames = await extractSceneFrames(rcFile, 24, (i, n) =>
-        setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene \u1791\u17bb\u178f\u1793\u17c1\u1794\u17d2ប\u2026 (${i}/${n})`));
+        setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene ထုတ်နေပါတယ်… (${i}/${n})`));
       if (frames.length >= 4) {
-        setProgress("rc", 57, "AI \u1780 scene \u178f\u17d2វ\u17c1\u1780\u17d2រ\u17bd\u178f\u1796\u17d2ប\u17b8 script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026");
-        log("rc", `🎬 scene ${frames.length} \u1780\u17d2វ\u1780\u17cd + transcript \u1793\u17c2 script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026`);
+        setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
+        log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
         segments = await geminiRecapScriptVision(frames, transcriptText);
-        log("rc", `scene-\u1780\u17d2រ\u178a\u17d2ល\u17cd script \u179a\u1794\u17d2រ\u1796\u17d2ប\u17b8 (${segments.length} segments) \u2705`, "ok");
+        log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
       } else {
-        log("rc", "scene \u1791\u17bb\u178f\u1798\u179a\u1794\u17d2រ — \u1785\u17b6\u179f\u17b6\u179a\u1793\u17c2\u1794\u17d2ល \u179f\u1780\u17cd\u179b\u17bb\u1794\u17d2ប\u1798\u179b\u17d2ប\u2026", "err");
+        log("rc", "scene ထုတ်မရပါ — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…", "err");
       }
     } catch (e) {
-      log("rc", `scene script \u1798\u17a2\u17c4\u1784\u17d2ម\u179b\u17b7\u1798\u17d2ប\u17b6 (${e.message}) — \u1785\u17b6\u179f\u17b6\u179a\u1793\u17c2\u1794\u17d2ល \u179f\u1780\u17cd\u179b\u17bb\u1794\u17d2ប\u1798\u179b\u17d2ប\u2026`, "err");
+      log("rc", `scene script မအောင်မြင်ပါ (${e.message}) — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…`, "err");
     }
     if (!segments || !segments.length) {
-      setProgress("rc", 58, "Recap script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប (Gemini)\u2026");
-      log("rc", "3\ufe0f\u20e3 Gemini \u1780 recap script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026");
+      setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
+      log("rc", "3️⃣ Gemini က recap script ရေးနေပါတယ်…");
       segments = await geminiRecapScript(transcriptText);
     }
     $("rcScript").value = segments.map((s) =>
@@ -639,8 +652,20 @@ $("startRecap").addEventListener("click", async () => {
       const pieces = splitLongText(seg.text, 700);
       try {
         for (const pc of pieces) {
-          const b = await edgeTTS(pc, voice);
-          if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
+          let b = null, terr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              b = await edgeTTS(pc, voice);
+              if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
+              terr = null;
+              break;
+            } catch (e) {
+              terr = e;
+              log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/3) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
+              await new Promise((r) => setTimeout(r, 2000 * attempt));
+            }
+          }
+          if (!b || b.size === 0) throw terr || new Error("TTS မအောင်မြင်ပါ");
           segPieces[i].push(b);
         }
         if ((i + 1) % 5 === 0 || i === segments.length - 1) {
