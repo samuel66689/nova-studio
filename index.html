@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Studio — Browser Video Tools</title>
+<!-- COOP/COEP headers via service worker (ffmpeg.wasm multi-thread အတွက်) -->
+<script src="coi-serviceworker.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "@ffmpeg/ffmpeg": "https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/esm/index.js",
+    "@ffmpeg/util": "https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js"
+  }
+}
+</script>
+<style>
+  :root { --bg:#14101d; --card:#1e1830; --line:#352b52; --acc:#a855f7; --acc2:#ec4899;
+          --txt:#f1ecff; --dim:#a89fc7; --ok:#34d399; --err:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font-family:"Noto Sans Myanmar","Myanmar Text",system-ui,sans-serif;
+         max-width:760px; margin:0 auto; padding:12px; }
+  header { text-align:center; padding:14px 6px 6px; }
+  header h1 { margin:0; font-size:26px;
+    background:linear-gradient(90deg,var(--acc),var(--acc2));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  header p { color:var(--dim); font-size:13px; margin:6px 0 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+          padding:14px; margin:12px 0; }
+  .card h2 { margin:0 0 10px; font-size:17px; }
+  label { display:block; font-size:13px; color:var(--dim); margin:10px 0 4px; }
+  input[type=text], input[type=password], input[type=number], input[type=file], select, textarea {
+    width:100%; padding:11px; border-radius:10px; border:1px solid var(--line);
+    background:#100c1a; color:var(--txt); font-size:15px; font-family:inherit; }
+  textarea { min-height:110px; resize:vertical; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .row > * { flex:1 1 auto; }
+  button { background:linear-gradient(90deg,var(--acc),var(--acc2)); color:#fff; border:0;
+           border-radius:12px; padding:13px 18px; font-size:16px; font-weight:700;
+           font-family:inherit; cursor:pointer; margin-top:10px; min-height:48px; }
+  button:disabled { opacity:.45; cursor:wait; }
+  button.ghost { background:#2a2140; border:1px solid var(--line); }
+  .tabs { display:flex; gap:8px; margin:12px 0; position:sticky; top:0; z-index:5;
+          background:var(--bg); padding:8px 0; }
+  .tab-btn { flex:1; margin-top:0; font-size:15px; padding:12px 4px; background:#241c3a; }
+  .tab-btn.active { background:linear-gradient(90deg,var(--acc),var(--acc2)); }
+  .tabpage { display:none; } .tabpage.active { display:block; }
+  .pbar { height:10px; background:#100c1a; border-radius:6px; margin-top:10px; overflow:hidden; }
+  .pfill { height:100%; width:0%; border-radius:6px;
+           background:linear-gradient(90deg,var(--acc),var(--acc2)); transition:width .2s; }
+  .plabel { font-size:13px; color:var(--dim); margin-top:4px; min-height:18px; }
+  .log { background:#0d0a15; border:1px solid var(--line); border-radius:10px;
+         padding:10px; margin-top:10px; font-size:12.5px; line-height:1.7;
+         max-height:220px; overflow-y:auto; white-space:pre-wrap; }
+  .log .ok { color:var(--ok); } .log .err { color:var(--err); }
+  .log .t { color:#6b5f8f; }
+  .results { margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+  .part { display:flex; align-items:center; justify-content:space-between; gap:8px;
+          background:#100c1a; border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
+  .part span { font-size:13px; }
+  .part a, .dl { background:#2a2140; color:#fff; text-decoration:none; padding:9px 14px;
+                 border-radius:10px; font-size:14px; font-weight:700; white-space:nowrap; }
+  .steps { list-style:none; padding:0; margin:10px 0 0; }
+  .steps li { padding:8px 10px; border:1px solid var(--line); border-radius:10px;
+              margin-bottom:6px; font-size:14px; background:#100c1a; }
+  .steps li.run { border-color:var(--acc); } .steps li.done { border-color:var(--ok); }
+  .steps li.fail { border-color:var(--err); }
+  .hint { font-size:12.5px; color:var(--dim); margin-top:8px; line-height:1.7; }
+  .chk { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:15px; }
+  .chk input { width:20px; height:20px; }
+  .fileinfo { font-size:13px; color:var(--dim); margin-top:6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Nova Studio</h1>
+  <p>Video tools တွေ browser ထဲမှာပဲ လုပ်မယ် — server မလို, upload မလို</p>
+</header>
+
+<div class="card">
+  <h2>⚙️ API Keys</h2>
+  <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — console.groq.com)</span></label>
+  <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off">
+  <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — aistudio.google.com)</span></label>
+  <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off">
+  <div class="row">
+    <button id="saveKeys">💾 သိမ်းမယ်</button>
+    <button id="clearKeys" class="ghost">🗑 ဖျက်မယ်</button>
+  </div>
+  <div class="hint" id="keyStatus">⚠️ Key မထည့်ရသေးပါ</div>
+  <div class="hint">Keys တွေက ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — ဘယ်� server မှာမှ မတင်ဘူး။</div>
+</div>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="cut">✂️ Nova Cut</button>
+  <button class="tab-btn" data-tab="editor">🎬 Video Editor</button>
+  <button class="tab-btn" data-tab="recap">🎙️ Recap Nova</button>
+</nav>
+
+<!-- ============ NOVA CUT ============ -->
+<section class="tabpage active" id="tab-cut">
+  <div class="card">
+    <h2>✂️ Nova Cut — Video အပိုင်းလိုက် ဖြတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="cutFile" accept="video/*">
+    <div class="fileinfo" id="cutFileInfo"></div>
+    <label>တစ်ပိုင်းကို မိနစ် (ပုံမှန် ၈)</label>
+    <input type="number" id="cutMinutes" value="8" min="1" max="120" step="1">
+    <button id="startCut">✂️ ဖြတ်မယ်</button>
+    <div class="pbar"><div class="pfill" id="cutProgress"></div></div>
+    <div class="plabel" id="cutProgressLabel"></div>
+    <div class="results" id="cutResults"></div>
+    <button id="downloadAll" class="ghost" style="display:none">⬇️ အားလုံး download</button>
+    <div class="log" id="cutLog"></div>
+    <div class="hint">Re-encode မလုပ်ဘူး (stream copy) — ဒါကြောင့် အရမ်းမြန်တယ်။ Download ဆိုတာ browser memory ကနေ save ချရုံပဲ။</div>
+  </div>
+</section>
+
+<!-- ============ VIDEO EDITOR ============ -->
+<section class="tabpage" id="tab-editor">
+  <div class="card">
+    <h2>🎬 Video Editor</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="edFile" accept="video/*">
+    <div class="fileinfo" id="edFileInfo"></div>
+
+    <label>Crop (အချိုး)</label>
+    <select id="cropSel">
+      <option value="original">မူရင်း (မဖြတ်ဘူး)</option>
+      <option value="16:9">16:9 (YouTube)</option>
+      <option value="9:16">9:16 (TikTok/Reels)</option>
+      <option value="1:1">1:1 (Square)</option>
+    </select>
+
+    <div class="chk"><input type="checkbox" id="flipChk"><span>↔️ မှန်ပြောင်း (horizontal flip)</span></div>
+    <div class="chk"><input type="checkbox" id="compressChk"><span>🗜️ 480p ကို compress လုပ်မယ်</span></div>
+
+    <label>Watermark စာသား (မထည့်ချင်ရင် ချန်ထား)</label>
+    <input type="text" id="wmText" placeholder="ဥပမာ: @myaccount">
+
+    <label>စာတန်းထိုး .srt file (burn-in — မထည့်ချင်ရင် ချန်ထား)</label>
+    <input type="file" id="srtFile" accept=".srt">
+
+    <div class="row">
+      <button id="startEdit">🎬 လုပ်မယ်</button>
+      <button id="extractAudio" class="ghost">🎵 အသံထုတ်မယ် (MP3)</button>
+    </div>
+    <div class="pbar"><div class="pfill" id="edProgress"></div></div>
+    <div class="plabel" id="edProgressLabel"></div>
+    <div class="results" id="edResults"></div>
+    <div class="log" id="edLog"></div>
+    <div class="hint">Filter (crop/flip/subtitle/compress) တစ်ခုမှ မသုံးရင် re-encode မလုပ်ဘဲ အမြန် copy ကူးမယ်။</div>
+  </div>
+</section>
+
+<!-- ============ RECAP NOVA ============ -->
+<section class="tabpage" id="tab-recap">
+  <div class="card">
+    <h2>🎙️ Recap Nova — Video ကနေ recap video ထုတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="rcFile" accept="video/*">
+    <div class="fileinfo" id="rcFileInfo"></div>
+
+    <div class="row">
+      <div>
+        <label>Transcribe ဘာသာစကား</label>
+        <select id="rcLang">
+          <option value="auto">Auto</option>
+          <option value="zh">中文 (Chinese)</option>
+          <option value="en">English</option>
+          <option value="my">မြန်မာ</option>
+        </select>
+      </div>
+      <div>
+        <label>အသံ (TTS voice)</label>
+        <select id="rcVoice">
+          <option value="my-MM-NilarNeural">👩 Nilar (မိန်းကလေး)</option>
+          <option value="my-MM-ThihaNeural">👨 Thiha (ယောကျ်ားလေး)</option>
+        </select>
+      </div>
+    </div>
+
+    <button id="startRecap">🎙️ Recap စမယ်</button>
+    <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
+    <div class="plabel" id="rcProgressLabel"></div>
+
+    <ol class="steps" id="rcSteps">
+      <li data-step="audio">1️⃣ အသံခွဲထုတ်မယ် (browser)</li>
+      <li data-step="transcribe">2️⃣ စာသားပြောင်းမယ် — Groq Whisper (မရရင် Gemini)</li>
+      <li data-step="script">3️⃣ Recap script ရေးမယ် — Gemini</li>
+      <li data-step="tts">4️⃣ အသံထွက်မယ် — Edge TTS (browser)</li>
+      <li data-step="mux">5️⃣ Video နဲ့ တွဲမယ် + SRT ထုတ်မယ်</li>
+    </ol>
+
+    <label>Transcript (စစ်ကြည့်ရန်)</label>
+    <textarea id="rcTranscript" readonly placeholder="transcribe ပြီးရင် ဒီမှာ ပေါ်မယ်…"></textarea>
+    <label>Recap script (segments)</label>
+    <textarea id="rcScript" readonly placeholder="script ရရင် ဒီမှာ ပေါ်မယ်…"></textarea>
+
+    <div class="results" id="rcResults"></div>
+    <div class="log" id="rcLog"></div>
+    <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က ဘယ် server မှမတက်ဘူး။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
+  </div>
+</section>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
