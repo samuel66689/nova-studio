@@ -129,7 +129,7 @@ const server = http.createServer((req, res) => {
       } catch (e) {
         console.error("tts error:", e.message);
         res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("tts failed");
+        res.end("tts failed: " + (e.message || e).toString().slice(0, 200));
       }
     });
     return;
