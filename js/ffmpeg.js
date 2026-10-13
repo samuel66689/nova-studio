@@ -3,11 +3,13 @@
 // can't break loading. CDN copies (jsdelivr → unpkg) are fallbacks.
 // Multi-thread core is tried first when the browser allows SharedArrayBuffer,
 // otherwise the single-thread core is used directly.
+// Core downloads show progress and have a stall timeout so a dead connection
+// can't hang the app forever.
 
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL, fetchFile } from "@ffmpeg/util";
+import { fetchFile } from "@ffmpeg/util";
 
-export { fetchFile, toBlobURL };
+export { fetchFile };
 
 let ffmpeg = null;
 let mode = null; // 'mt' | 'st'
@@ -31,15 +33,44 @@ function coreSources(kind) {
   ];
 }
 
-/** fetch -> blob URL, with one retry */
-async function fetchBlobURL(url, mime) {
+/**
+ * Fetch a URL to a blob URL with download progress, stall timeout and retry.
+ * log(pct) is called with 0..100 as the download progresses.
+ */
+async function fetchBlobURL(url, mime, fileLabel, log, onPct) {
+  const TIMEOUT_MS = 4 * 60 * 1000;
   let err = null;
-  for (let i = 0; i < 2; i++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error("timeout")), TIMEOUT_MS);
     try {
-      return await toBlobURL(url, mime);
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const total = parseInt(res.headers.get("content-length") || "0", 10) || 0;
+      const reader = res.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      let lastPct = -1;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.byteLength;
+        if (total > 0) {
+          const pct = Math.floor((loaded / total) * 100);
+          if (pct !== lastPct && pct % 5 === 0) {
+            lastPct = pct;
+            if (onPct) { try { onPct(pct); } catch (_) {} }
+          }
+        }
+      }
+      clearTimeout(timer);
+      return URL.createObjectURL(new Blob(chunks, { type: mime }));
     } catch (e) {
+      clearTimeout(timer);
       err = e;
-      await new Promise((r) => setTimeout(r, 1200));
+      if (log) log(`${fileLabel} (${attempt}/2) မရပါ — ပြန်စမ်းနေပါတယ်…`);
+      await new Promise((r) => setTimeout(r, 1500));
     }
   }
   throw err;
@@ -60,16 +91,19 @@ export async function ensureFFmpeg(log) {
         if (progressCb) { try { progressCb(progress); } catch (_) {} }
       });
       try {
-        if (log) log(`FFmpeg (${kind === "mt" ? "multi-thread" : "single-thread"}) — ${s.label} ကနေ load လုပ်နေပါတယ်…`);
+        const tag = kind === "mt" ? "multi-thread" : "single-thread";
+        if (log) log(`FFmpeg (${tag}) — ${s.label} ကနေ download လုပ်နေပါတယ်… (32MB, ခဏစောင့်)`);
         const cfg = {
-          coreURL: await fetchBlobURL(s.js, "text/javascript"),
-          wasmURL: await fetchBlobURL(s.wasm, "application/wasm"),
+          coreURL: await fetchBlobURL(s.js, "text/javascript", "core js", log, null),
+          wasmURL: await fetchBlobURL(s.wasm, "application/wasm", "core wasm", log,
+            (p) => { if (log) log(`⬇️ FFmpeg download… ${p}% (${s.label})`); }),
         };
-        if (s.worker) cfg.classWorkerURL = await fetchBlobURL(s.worker, "text/javascript");
+        if (s.worker) cfg.classWorkerURL = await fetchBlobURL(s.worker, "text/javascript", "worker", log, null);
+        if (log) log("Download ပြီးပါပြီ — FFmpeg စတင်နေပါတယ်… (ဖုန်းပေါ်မှာ 1 မိနစ်လောက်ကြာနိုင်)");
         await inst.load(cfg);
         ffmpeg = inst;
         mode = kind;
-        if (log) log(`FFmpeg အဆင်သင့်ဖြစ်ပါပြီ ✅ (${kind === "mt" ? "multi-thread" : "single-thread"} · ${s.label})`, "ok");
+        if (log) log(`FFmpeg အဆင်သင့်ဖြစ်ပါပြီ ✅ (${tag} · ${s.label})`, "ok");
         return ffmpeg;
       } catch (e) {
         lastErr = e;
