@@ -166,23 +166,220 @@ $("startCut").addEventListener("click", async () => {
 // ============================================================
 // TAB 2 — VIDEO EDITOR
 // ============================================================
-let edFile = null, edSrt = null;
-$("edFile").addEventListener("change", async (e) => {
-  edFile = e.target.files[0] || null;
+let edFile = null, edSrt = null, edFileName = "";
+let edWH = null;              // {iw, ih} — preview video natural size
+let previewURL = null;
+const blurRegions = [];       // {x,y,w,h fractions 0-1, t0,t1 seconds, strength 1-30}
+
+/** Load a file/Blob into the editor (file picker or recap handoff). */
+function setEditorInput(file, name) {
+  edFile = file || null;
+  edFileName = name || (file && file.name) || "";
   $("edResults").innerHTML = "";
-  if (!edFile) { $("edFileInfo").textContent = ""; return; }
-  $("edFileInfo").textContent = edFile.name + " (" + fmtSize(edFile.size) + ")";
+  clearBlurRegions();
+  if (!edFile) {
+    $("edFileInfo").textContent = "";
+    setPreview(null);
+    return;
+  }
+  $("edFileInfo").textContent = edFileName + " (" + fmtSize(edFile.size) + ")";
+  setPreview(edFile);
+}
+$("edFile").addEventListener("change", (e) => {
+  const f = e.target.files[0] || null;
+  setEditorInput(f, f ? f.name : "");
 });
 $("srtFile").addEventListener("change", (e) => {
   edSrt = e.target.files[0] || null;
+});
+
+// ---------- blur boxes ----------
+function setPreview(blob) {
+  const v = $("blurPrev");
+  if (previewURL) { URL.revokeObjectURL(previewURL); previewURL = null; }
+  edWH = null;
+  updateWrapRatio();
+  if (!blob) { v.removeAttribute("src"); v.load(); return; }
+  previewURL = URL.createObjectURL(blob);
+  v.src = previewURL;
+}
+$("blurPrev").addEventListener("loadedmetadata", () => {
+  const v = $("blurPrev");
+  if (v.videoWidth) edWH = { iw: v.videoWidth, ih: v.videoHeight };
+  updateWrapRatio();
+});
+
+/** Output W,H in pixels — mirrors the editor's crop/scale filters. */
+function outDims() {
+  if (!edWH) return null;
+  let W = edWH.iw, H = edWH.ih;
+  const crop = $("cropSel").value;
+  if (crop === "16:9") { W = Math.min(W, H * 16 / 9); H = W * 9 / 16; }
+  else if (crop === "9:16") { W = Math.min(W, H * 9 / 16); H = W * 16 / 9; }
+  else if (crop === "1:1") { W = Math.min(W, H); H = W; }
+  if ($("compressChk").checked) { W = Math.round((W / H) * 480 / 2) * 2; H = 480; }
+  W = Math.max(2, Math.round(W / 2) * 2);
+  H = Math.max(2, Math.round(H / 2) * 2);
+  return { W, H };
+}
+function updateWrapRatio() {
+  const d = outDims();
+  $("blurWrap").style.aspectRatio = d ? (d.W + " / " + d.H) : "16 / 9";
+}
+$("cropSel").addEventListener("change", updateWrapRatio);
+$("compressChk").addEventListener("change", updateWrapRatio);
+
+const clamp01 = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+function positionRegionEl(el, r) {
+  el.style.left = (r.x * 100) + "%";
+  el.style.top = (r.y * 100) + "%";
+  el.style.width = (r.w * 100) + "%";
+  el.style.height = (r.h * 100) + "%";
+}
+
+function makeDraggable(el, r, handle) {
+  let mode = null, sx = 0, sy = 0, ox = 0, oy = 0, ow = 0, oh = 0;
+  el.addEventListener("pointerdown", (e) => {
+    mode = (e.target === handle) ? "resize" : "move";
+    sx = e.clientX; sy = e.clientY;
+    ox = r.x; oy = r.y; ow = r.w; oh = r.h;
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!mode) return;
+    const wrap = $("blurWrap");
+    const dx = (e.clientX - sx) / wrap.clientWidth;
+    const dy = (e.clientY - sy) / wrap.clientHeight;
+    if (mode === "move") {
+      r.x = clamp01(ox + dx, 0, 1 - r.w);
+      r.y = clamp01(oy + dy, 0, 1 - r.h);
+    } else {
+      r.w = clamp01(ow + dx, 0.03, 1 - ox);
+      r.h = clamp01(oh + dy, 0.03, 1 - oy);
+    }
+    positionRegionEl(el, r);
+  });
+  const stop = () => { mode = null; };
+  el.addEventListener("pointerup", stop);
+  el.addEventListener("pointercancel", stop);
+}
+
+function renumberBlurCards() {
+  const cards = $("blurList").children;
+  for (let i = 0; i < cards.length; i++) {
+    const t = cards[i].querySelector(".btitle");
+    if (t) t.textContent = "Box " + (i + 1);
+  }
+}
+
+function clearBlurRegions() {
+  blurRegions.length = 0;
+  document.querySelectorAll("#blurWrap .bregion").forEach((e) => e.remove());
+  $("blurList").innerHTML = "";
+}
+
+function addBlurRegion(r) {
+  blurRegions.push(r);
+  const el = document.createElement("div");
+  el.className = "bregion";
+  const handle = document.createElement("div");
+  handle.className = "bhandle";
+  el.appendChild(handle);
+  $("blurWrap").appendChild(el);
+  positionRegionEl(el, r);
+  makeDraggable(el, r, handle);
+
+  const card = document.createElement("div");
+  card.className = "part";
+  const title = document.createElement("span");
+  title.className = "btitle";
+  title.textContent = "Box " + blurRegions.length;
+  const ctl = document.createElement("div");
+  ctl.className = "bctl";
+  ctl.innerHTML =
+    '<label>စ(s)<input type="number" class="bt0" value="' + r.t0 + '" min="0" step="0.5"></label>' +
+    '<label>ဆုံး(s)<input type="number" class="bt1" value="' + r.t1 + '" min="0" step="0.5"></label>' +
+    '<label>Blur<input type="number" class="bstr" value="' + r.strength + '" min="1" max="30" step="1"></label>';
+  ctl.querySelector(".bt0").addEventListener("input", (e) => {
+    r.t0 = Math.max(0, parseFloat(e.target.value) || 0);
+  });
+  ctl.querySelector(".bt1").addEventListener("input", (e) => {
+    r.t1 = Math.max(0, parseFloat(e.target.value) || 0);
+  });
+  ctl.querySelector(".bstr").addEventListener("input", (e) => {
+    r.strength = Math.max(1, Math.min(30, parseInt(e.target.value, 10) || 12));
+  });
+  const del = document.createElement("button");
+  del.className = "ghost";
+  del.style.cssText = "padding:8px 12px;min-height:0;font-size:14px;margin-top:0;";
+  del.textContent = "❌";
+  del.onclick = () => {
+    blurRegions.splice(blurRegions.indexOf(r), 1);
+    el.remove();
+    card.remove();
+    renumberBlurCards();
+  };
+  card.appendChild(title);
+  card.appendChild(ctl);
+  card.appendChild(del);
+  $("blurList").appendChild(card);
+}
+
+$("addBlur").addEventListener("click", () => {
+  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!edWH) { alert("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
+  const dur = $("blurPrev").duration;
+  const t1 = (dur && isFinite(dur)) ? Math.round(dur * 10) / 10 : 10;
+  addBlurRegion({ x: 0.35, y: 0.30, w: 0.30, h: 0.25, t0: 0, t1: t1, strength: 12 });
 });
 
 function escDrawtext(s) {
   return String(s).replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+/** Build ffmpeg args: base filters + optional blur-box chain (filter_complex). */
+function buildEditArgs(baseFilters, regions, dims) {
+  if (!regions.length) {
+    return baseFilters.length === 0
+      ? ["-i", "input.mp4", "-c", "copy", "-movflags", "+faststart", "output.mp4"]
+      : ["-i", "input.mp4", "-vf", baseFilters.join(","),
+         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "output.mp4"];
+  }
+  // Safety margin: real crop output can differ by ~2px from our mirror math.
+  const W = dims.W - 2, H = dims.H - 2;
+  let fc, last;
+  if (baseFilters.length) { fc = "[0:v]" + baseFilters.join(",") + "[v0]"; last = "[v0]"; }
+  else { fc = "[0:v]copy[v0]"; last = "[v0]"; }
+  regions.forEach((r, i) => {
+    let cx = Math.max(0, Math.round(W * r.x / 2) * 2);
+    let cy = Math.max(0, Math.round(H * r.y / 2) * 2);
+    let cw = Math.max(2, Math.round(W * r.w / 2) * 2);
+    let ch = Math.max(2, Math.round(H * r.h / 2) * 2);
+    if (cx + cw > W) cw = W - cx;
+    if (cy + ch > H) ch = H - cy;
+    if (cw < 2 || ch < 2) return; // degenerate — skip
+    const st = Math.max(1, Math.min(30, Math.round(r.strength)));
+    const t0 = Math.max(0, +r.t0), t1 = Math.max(t0, +r.t1);
+    fc += ";" + last + "crop=" + cw + ":" + ch + ":" + cx + ":" + cy +
+          ",boxblur=" + st + "[bx" + i + "]";
+    fc += ";" + last + "[bx" + i + "]overlay=" + cx + ":" + cy +
+          ":enable='between(t," + t0 + "," + t1 + ")'[v" + (i + 1) + "]";
+    last = "[v" + (i + 1) + "]";
+  });
+  return ["-i", "input.mp4", "-filter_complex", fc,
+    "-map", last, "-map", "0:a?",
+    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart", "output.mp4"];
+}
+
 $("startEdit").addEventListener("click", async () => {
   if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  const dims = outDims();
+  if (blurRegions.length && !dims) { alert("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
   setBusy(["startEdit", "extractAudio"], true);
   $("edResults").innerHTML = "";
   const vf = [];
@@ -198,7 +395,7 @@ $("startEdit").addEventListener("click", async () => {
   if ($("compressChk").checked) vf.push("scale=-2:480");
   if (wantSub) vf.push("subtitles=subs.srt");
 
-  const baseName = edFile.name.replace(/\.[^.]+$/, "");
+  const baseName = edFileName.replace(/\.[^.]+$/, "");
   try {
     log("ed", "FFmpeg ပြင်ဆင်နေပါတယ်…");
     const ff = await ensureFFmpeg((m, c) => log("ed", m, c));
@@ -208,18 +405,15 @@ $("startEdit").addEventListener("click", async () => {
     for (const [n, d] of Object.entries(files)) await ff.writeFile(n, d);
 
     let args, dropped = [];
-    const buildArgs = (filters) => filters.length === 0
-      ? ["-i", "input.mp4", "-c", "copy", "-movflags", "+faststart", "output.mp4"]
-      : ["-i", "input.mp4", "-vf", filters.join(","),
-         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "output.mp4"];
+    const buildArgs = (filters) => buildEditArgs(filters, blurRegions, dims);
 
     // Try full filter chain; if it fails, drop subtitle/watermark (font ပြဿနာ) and retry.
     let cur = vf.slice();
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       args = buildArgs(cur);
-      log("ed", "Run #" + (attempt + 1) + (cur.length ? " filters: " + cur.join(" | ") : " (copy mode)"));
+      log("ed", "Run #" + (attempt + 1) + (cur.length ? " filters: " + cur.join(" | ") : " (copy mode)") +
+        (blurRegions.length ? " + " + blurRegions.length + " blur box" : ""));
       try {
         await ff.exec(args);
         lastErr = null;
@@ -270,7 +464,7 @@ $("extractAudio").addEventListener("click", async () => {
     const data = await ff.readFile("audio.mp3");
     const blob = new Blob([data], { type: "audio/mpeg" });
     for (const n of ["input.mp4", "audio.mp3"]) { try { await ff.deleteFile(n); } catch (_) {} }
-    const { row } = dlRow(edFile.name.replace(/\.[^.]+$/, "") + ".mp3", blob);
+    const { row } = dlRow(edFileName.replace(/\.[^.]+$/, "") + ".mp3", blob);
     $("edResults").appendChild(row);
     setProgress("ed", 100, "ပြီးပါပြီ ✅");
     log("ed", "MP3 ရပါပြီ ✅", "ok");
@@ -287,6 +481,7 @@ $("extractAudio").addEventListener("click", async () => {
 // TAB 3 — RECAP NOVA
 // ============================================================
 let rcFile = null;
+let rcHandoff = null; // {blob, name} — recap output for the editor handoff
 $("rcFile").addEventListener("change", async (e) => {
   rcFile = e.target.files[0] || null;
   $("rcResults").innerHTML = "";
@@ -328,6 +523,7 @@ $("startRecap").addEventListener("click", async () => {
   const voice = $("rcVoice").value;
   setBusy(["startRecap"], true);
   $("rcResults").innerHTML = "";
+  rcHandoff = null;
   $("rcTranscript").value = "";
   $("rcScript").value = "";
   resetSteps();
@@ -488,6 +684,19 @@ $("startRecap").addEventListener("click", async () => {
     const r1 = dlRow(baseName + "_recap.mp4", vblob); $("rcResults").appendChild(r1.row);
     const r2 = dlRow(baseName + "_recap.srt", srtBlob); $("rcResults").appendChild(r2.row);
     const r3 = dlRow(baseName + "_script.txt", txtBlob); $("rcResults").appendChild(r3.row);
+
+    // Handoff: open the recap output in the Video Editor
+    rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
+    const handBtn = document.createElement("button");
+    handBtn.className = "ghost";
+    handBtn.textContent = "✏️ Video Editor မှာ ဆက်ပြင်";
+    handBtn.onclick = () => {
+      if (!rcHandoff) return;
+      setEditorInput(rcHandoff.blob, rcHandoff.name);
+      document.querySelector('.tab-btn[data-tab="editor"]').click();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    $("rcResults").appendChild(handBtn);
 
     // per-segment Web Speech preview buttons (QC)
     const prevWrap = document.createElement("div");
