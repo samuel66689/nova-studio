@@ -98,9 +98,12 @@ export async function ensureFFmpeg(log) {
           wasmURL: await fetchBlobURL(s.wasm, "application/wasm", "core wasm", log,
             (p) => { if (log) log(`⬇️ FFmpeg download… ${p}% (${s.label})`); }),
         };
-        if (s.worker) cfg.classWorkerURL = await fetchBlobURL(s.worker, "text/javascript", "worker", log, null);
+        if (s.worker) cfg.workerURL = await fetchBlobURL(s.worker, "text/javascript", "worker", log, null);
         if (log) log("Download ပြီးပါပြီ — FFmpeg စတင်နေပါတယ်… (ဖုန်းပေါ်မှာ 1 မိနစ်လောက်ကြာနိုင်)");
-        await inst.load(cfg);
+        await Promise.race([
+          inst.load(cfg),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("load timeout (3 min)")), 3 * 60 * 1000)),
+        ]);
         ffmpeg = inst;
         mode = kind;
         if (log) log(`FFmpeg အဆင်သင့်ဖြစ်ပါပြီ ✅ (${tag} · ${s.label})`, "ok");
