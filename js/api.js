@@ -50,7 +50,7 @@ export function mediaDuration(blob) {
   });
 }
 
-function blobToBase64(blob) {
+export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(String(r.result).split(",")[1]);
@@ -97,11 +97,11 @@ export async function groqTranscribe(mp3Blob, language) {
 }
 
 // ---------- Gemini ----------
-async function geminiGenerate(model, systemText, userText, maxTokens) {
+async function geminiGenerateParts(model, systemText, parts, maxTokens) {
   const { gemini } = getKeys();
   if (!gemini) throw new Error("Gemini API key မထည့်ရသေးပါ — ⚙️ Settings မှာ ထည့်ပါ");
   const body = {
-    contents: [{ parts: [{ text: userText }] }],
+    contents: [{ parts }],
     generationConfig: { temperature: 0.8, maxOutputTokens: maxTokens || 8192 },
   };
   if (systemText) body.systemInstruction = { parts: [{ text: systemText }] };
@@ -176,6 +176,94 @@ const RECAP_SYSTEM = [
   "5. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
   "6. No intro, no outro, no markdown, no numbering — only the segment lines.",
 ].join("\n");
+
+async function geminiGenerate(model, systemText, userText, maxTokens) {
+  return geminiGenerateParts(model, systemText, [{ text: userText }], maxTokens);
+}
+
+const RECAP_VISION_SYSTEM = [
+  "You are a professional Burmese recap narrator for short drama videos.",
+  "You are given SCENE FRAMES from the video (in story order, each labeled with its timestamp) PLUS the full audio transcript with timestamps.",
+  "WATCH the scenes and write the narration to match what is actually visible on screen — actions, gestures, expressions, settings.",
+  "Write NATURAL SPOKEN BURMESE (စကားပြောဟန်) — like a friend excitedly retelling a drama episode.",
+  "STRICT RULES:",
+  "1. NEVER use literary/formal particles: သည်, ၏, ၍, ထို့ကြောင့်, သို့သော်. Use natural spoken forms only.",
+  "2. CHARACTER IDENTITY: never mix up who is who. If a name is spoken or shown, use it only for that person; unknown people get role labels.",
+  "3. Cover the story IN ORDER. Keep every key twist, stay concise but engaging.",
+  "4. You MAY quote a short real spoken line from the transcript when it is impactful — never invent dialogue that is not in the transcript.",
+  "5. Output ONLY segment lines, one per line, in this EXACT format:",
+  "[00:00-00:12] narration text here",
+  "[00:12-00:25] narration text here",
+  "6. Each segment must be 5 to 12 seconds of spoken narration.",
+  "7. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
+  "8. No intro, no outro, no markdown, no numbering — only the segment lines.",
+].join("\n");
+
+/** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
+export async function geminiRecapScriptVision(frames, transcriptText) {
+  const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+  let lastErr = null;
+  for (const m of models) {
+    try {
+      const parts = [];
+      for (const f of frames) {
+        parts.push({ text: "Scene at " + fmtClock(f.at) + ":" });
+        parts.push({ inlineData: { mimeType: "image/jpeg", data: f.b64 } });
+      }
+      parts.push({ text: "AUDIO TRANSCRIPT (with timestamps):\n" + transcriptText +
+        "\n\nNow watch the scenes above in story order and write the recap narration." });
+      const text = await geminiGenerateParts(m, RECAP_VISION_SYSTEM, parts, 8192);
+      const segs = parseRecapSegments(text);
+      if (!segs.length) throw new Error("script format မမှန်ပါ");
+      return segs;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+/** Extract up to maxFrames JPEG scene frames from a video blob. Returns [{at, b64}]. */
+export async function extractSceneFrames(file, maxFrames, onprog) {
+  const url = URL.createObjectURL(file);
+  const v = document.createElement("video");
+  v.muted = true;
+  v.preload = "auto";
+  v.src = url;
+  try {
+    await new Promise((res, rej) => {
+      v.onloadedmetadata = res;
+      v.onerror = () => rej(new Error("video ဖတ်မရပါ"));
+    });
+    const dur = v.duration || 0;
+    const n = Math.max(4, Math.min(maxFrames || 24, Math.floor(dur / 45)));
+    if (!dur || dur < 5 || n < 4) return [];
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const frames = [];
+    for (let i = 0; i < n; i++) {
+      const t = Math.min((dur * (i + 0.5)) / n, Math.max(0, dur - 0.2));
+      await new Promise((res) => {
+        let done = false;
+        const fin = () => { if (!done) { done = true; v.removeEventListener("seeked", on); res(); } };
+        const on = fin;
+        v.addEventListener("seeked", on);
+        setTimeout(fin, 4000);
+        try { v.currentTime = t; } catch (_) { fin(); }
+      });
+      const scale = Math.min(1, 480 / (v.videoWidth || 480));
+      canvas.width = Math.max(2, Math.round(v.videoWidth * scale));
+      canvas.height = Math.max(2, Math.round(v.videoHeight * scale));
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((r) => canvas.toBlob(r, "image/jpeg", 0.7));
+      if (blob) frames.push({ at: t, b64: await blobToBase64(blob) });
+      if (onprog) { try { onprog(i + 1, n); } catch (_) {} }
+    }
+    return frames;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
 
 /** Returns [{start,end,text}] recap segments. Tries 2.0-flash then 2.5-flash. */
 export async function geminiRecapScript(transcriptText) {
