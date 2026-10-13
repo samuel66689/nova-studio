@@ -80,9 +80,10 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
         res.end(audio);
       } catch (e) {
-        console.error("tts error:", (e.message || e).toString().slice(0, 200));
+        const msg = (e.message || e).toString().slice(0, 300);
+        console.error("tts error:", msg);
         res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("tts failed");
+        res.end("tts failed: " + msg);
       }
     });
     return;
