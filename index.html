@@ -70,6 +70,18 @@
   .chk { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:15px; }
   .chk input { width:20px; height:20px; }
   .fileinfo { font-size:13px; color:var(--dim); margin-top:6px; }
+  /* blur boxes */
+  #blurWrap { position:relative; width:100%; background:#000; border:1px solid var(--line);
+              border-radius:10px; overflow:hidden; aspect-ratio:16/9; margin-top:6px; }
+  #blurPrev { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; background:#000; }
+  .bregion { position:absolute; border:2px solid var(--acc2); background:rgba(236,72,153,.22);
+             cursor:move; touch-action:none; box-sizing:border-box; }
+  .bhandle { position:absolute; right:-9px; bottom:-9px; width:22px; height:22px;
+             border-radius:50%; background:var(--acc2); cursor:nwse-resize; }
+  .bctl { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .bctl label { margin:0; font-size:12px; }
+  .bctl input { width:64px; padding:7px; font-size:13px; flex:0 0 auto; margin:0; }
+  #blurList .part { margin-top:6px; }
 </style>
 </head>
 <body>
@@ -142,6 +154,14 @@
 
     <label>စာတန်းထိုး .srt file (burn-in — မထည့်ချင်ရင် ချန်ထား)</label>
     <input type="file" id="srtFile" accept=".srt">
+
+    <label>🟫 Blur Box များ <span style="color:var(--dim)">(မျက်နှာ/logo ဖျက်ရန် — preview ပေါ်မှာ ဆွဲရွှေ့လို့ရ)</span></label>
+    <div id="blurWrap">
+      <video id="blurPrev" controls muted playsinline></video>
+    </div>
+    <div class="hint">Preview မှာ ပုံ ဆန့်နေသလို မြင်ရနိုင်တယ် — box တွေရဲ့ နေရာက final video ပေါ်မှာ အတိအကျ ကိုက်ညီမယ်။</div>
+    <button id="addBlur" class="ghost">➕ Blur box ထည့်</button>
+    <div id="blurList"></div>
 
     <div class="row">
       <button id="startEdit">🎬 လုပ်မယ်</button>
