@@ -1,4 +1,4 @@
-// nova-tts — server-side Microsoft Edge TTS proxy.
+// nova-tts — server-side Microsoft Edge TTS proxy. (deploy trigger)
 // Why server-side: browser-side Edge TTS exposes the user's IP (VPN exit IPs
 // get blocked); the maintained `edge-tts` Python library handles Microsoft's
 // rotating TrustedClientToken + Sec-MS-GEC DRM automatically.
