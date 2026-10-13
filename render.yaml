@@ -4,14 +4,5 @@ services:
     env: static
     buildCommand: ""
     staticPublishPath: .
-  - type: web
-    name: nova-tts
-    env: node
-    plan: free
-    rootDir: tts-server
-    buildCommand: npm install && python3 -m pip install --break-system-packages -r requirements.txt
-    startCommand: node server.js
-    healthCheckPath: /
-    envVars:
-      - key: ALLOWED_ORIGIN
-        value: https://nova-studio-qfco.onrender.com
+# NOTE: nova-tts is managed manually via API (srv-db79b9ivcj2c73cofp2g),
+# not via Blueprint — do NOT re-add it here or Render will create a duplicate.
