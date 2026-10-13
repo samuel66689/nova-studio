@@ -3,7 +3,8 @@ import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ff
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js";
 import {
   getKeys, saveKeys, clearKeys,
-  groqTranscribe, geminiTranscribe, geminiRecapScript,
+  groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
+  extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
 } from "./js/api.js";
 
@@ -597,11 +598,30 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", `transcript ရပါပြီ (${allSegs.length} ကြောင်း) ✅`, "ok");
     setStep("transcribe", "done");
 
-    // ---- step 3: recap script ----
+    // ---- step 3: recap script (vision — AI watches the scenes) ----
     setStep("script", "run");
-    setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
-    log("rc", "3️⃣ Gemini က recap script ရေးနေပါတယ်…");
-    const segments = await geminiRecapScript(transcriptText);
+    let segments = null;
+    try {
+      setProgress("rc", 52, "Scene frames \u1791\u17bb\u178f\u1793\u17c1\u1794\u17d2ប\u2026");
+      log("rc", "3\ufe0f\u20e3 AI \u1780 scene \u178f\u17d2វ\u17c1\u1780\u17d2រ\u17bd\u178f\u17cd\u1793\u17c1\u1794\u17d2ប\u2026 🎬");
+      const frames = await extractSceneFrames(rcFile, 24, (i, n) =>
+        setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene \u1791\u17bb\u178f\u1793\u17c1\u1794\u17d2ប\u2026 (${i}/${n})`));
+      if (frames.length >= 4) {
+        setProgress("rc", 57, "AI \u1780 scene \u178f\u17d2វ\u17c1\u1780\u17d2រ\u17bd\u178f\u1796\u17d2ប\u17b8 script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026");
+        log("rc", `🎬 scene ${frames.length} \u1780\u17d2វ\u1780\u17cd + transcript \u1793\u17c2 script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026`);
+        segments = await geminiRecapScriptVision(frames, transcriptText);
+        log("rc", `scene-\u1780\u17d2រ\u178a\u17d2ល\u17cd script \u179a\u1794\u17d2រ\u1796\u17d2ប\u17b8 (${segments.length} segments) \u2705`, "ok");
+      } else {
+        log("rc", "scene \u1791\u17bb\u178f\u1798\u179a\u1794\u17d2រ — \u1785\u17b6\u179f\u17b6\u179a\u1793\u17c2\u1794\u17d2ល \u179f\u1780\u17cd\u179b\u17bb\u1794\u17d2ប\u1798\u179b\u17d2ប\u2026", "err");
+      }
+    } catch (e) {
+      log("rc", `scene script \u1798\u17a2\u17c4\u1784\u17d2ម\u179b\u17b7\u1798\u17d2ប\u17b6 (${e.message}) — \u1785\u17b6\u179f\u17b6\u179a\u1793\u17c2\u1794\u17d2ល \u179f\u1780\u17cd\u179b\u17bb\u1794\u17d2ប\u1798\u179b\u17d2ប\u2026`, "err");
+    }
+    if (!segments || !segments.length) {
+      setProgress("rc", 58, "Recap script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប (Gemini)\u2026");
+      log("rc", "3\ufe0f\u20e3 Gemini \u1780 recap script \u179a\u17c1\u1793\u17c1\u1794\u17d2ប\u2026");
+      segments = await geminiRecapScript(transcriptText);
+    }
     $("rcScript").value = segments.map((s) =>
       `[${fmtClock(s.start)}-${fmtClock(s.end)}] ${s.text}`).join("\n");
     log("rc", `script ရပါပြီ (${segments.length} segments) ✅`, "ok");
