@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: nova-studio
+    env: static
+    buildCommand: ""
+    staticPublishPath: .
