@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014b";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014b";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014c";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014c";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014b";
+} from "./js/api.js?v=20261014c";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -91,6 +91,26 @@ $("clearKeys").addEventListener("click", () => {
   $("geminiKey").value = "";
   updateKeyStatus();
 });
+
+const TTS_SERVER = "https://nova-tts.onrender.com";
+
+/** Server-side Edge TTS (VPN-proof, native Burmese voices). Resolves to audio/mpeg Blob. */
+async function serverEdgeTTS(text, voice) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 120000);
+  try {
+    const res = await fetch(TTS_SERVER + "/api/tts", {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) throw new Error("TTS server error " + res.status);
+    const buf = await res.arrayBuffer();
+    if (!buf.byteLength) throw new Error("TTS server: \u1021\u101E\u1036\u1016\u102D\u102F\u1004\u1039 \u1017\u101C\u102C");
+    return new Blob([buf], { type: "audio/mpeg" });
+  } finally { clearTimeout(timer); }
+}
 
 // ============================================================
 // TAB 1 — NOVA CUT
@@ -645,7 +665,26 @@ $("startRecap").addEventListener("click", async () => {
     const useGeminiTTS = voice.startsWith("gemini:");
     const gVoice = useGeminiTTS ? voice.slice(7) : null;
     const gKey = (getKeys() || {}).gemini || "";
-    log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (${useGeminiTTS ? "Gemini TTS \u2014 " + gVoice : "Edge TTS \u2014 " + voice})\u2026`);
+    async function ttsPiece(text) {
+      if (useGeminiTTS) {
+        let b = await geminiTTS(text, gVoice, gKey);
+        if (b && b.type === "audio/wav") {
+          await ff.writeFile("gt.wav", await fetchFile(b));
+          await ff.exec(["-i", "gt.wav", "-c:a", "libmp3lame", "-b:a", "128k", "gt.mp3"]);
+          const gd = await ff.readFile("gt.mp3");
+          b = new Blob([gd], { type: "audio/mpeg" });
+          try { await ff.deleteFile("gt.wav"); await ff.deleteFile("gt.mp3"); } catch (_) {}
+        }
+        return b;
+      }
+      try {
+        return await serverEdgeTTS(text, voice);
+      } catch (e1) {
+        log("rc", "\u26A0\uFE0F server TTS \u1019\u101B\u1015\u102B — browser Edge \u1014\u1032\u1037 \u1015\u103C\u1014\u103A\u1005\u1019\u103A\u1038\u1019\u101A\u103A\u2026", "err");
+        return await edgeTTS(text, voice);
+      }
+    }
+    log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (${useGeminiTTS ? "Gemini TTS \u2014 " + gVoice : "server TTS \u2014 " + voice})\u2026`);
     const segPieces = segments.map(() => []);
     let ttsFailed = null;
     for (let i = 0; i < segments.length; i++) {
@@ -658,14 +697,7 @@ $("startRecap").addEventListener("click", async () => {
           let b = null, terr = null;
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              b = useGeminiTTS ? await geminiTTS(pc, gVoice, gKey) : await edgeTTS(pc, voice);
-              if (useGeminiTTS && b && b.type === "audio/wav") {
-                await ff.writeFile("gt.wav", await fetchFile(b));
-                await ff.exec(["-i", "gt.wav", "-c:a", "libmp3lame", "-b:a", "128k", "gt.mp3"]);
-                const gd = await ff.readFile("gt.mp3");
-                b = new Blob([gd], { type: "audio/mpeg" });
-                try { await ff.deleteFile("gt.wav"); await ff.deleteFile("gt.mp3"); } catch (_) {}
-              }
+              b = await ttsPiece(pc);
               if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
               terr = null;
               break;
