@@ -9,7 +9,7 @@ services:
     env: node
     plan: free
     rootDir: tts-server
-    buildCommand: npm install
+    buildCommand: npm install && pip install --break-system-packages -r requirements.txt
     startCommand: node server.js
     healthCheckPath: /
     envVars:
