@@ -108,9 +108,8 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
   let res;
   try {
     res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/" + model +
-      ":generateContent?key=" + encodeURIComponent(gemini),
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+      { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
     );
   } catch (e) {
     throw new Error("Gemini ကို ဆက်သွယ်မရပါ — internet စစ်ပါ");
@@ -139,9 +138,8 @@ export async function geminiTranscribe(mp3Blob) {
     generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
   };
   const res = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=" +
-    encodeURIComponent(gemini),
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+    { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
   );
   if (!res.ok) throw new Error("Gemini transcribe error " + res.status);
   const j = await res.json();
@@ -201,7 +199,7 @@ const RECAP_VISION_SYSTEM = [
 
 /** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
 export async function geminiRecapScriptVision(frames, transcriptText) {
-  const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
   let lastErr = null;
   for (const m of models) {
     try {
@@ -267,7 +265,7 @@ export async function extractSceneFrames(file, maxFrames, onprog) {
 
 /** Returns [{start,end,text}] recap segments. Tries 2.0-flash then 2.5-flash. */
 export async function geminiRecapScript(transcriptText) {
-  const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
   let lastErr = null;
   for (const m of models) {
     try {
