@@ -1,6 +1,6 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js";
-import { edgeTTS, previewWithWebSpeech } from "./js/tts.js";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -642,7 +642,10 @@ $("startRecap").addEventListener("click", async () => {
 
     // ---- step 4: TTS per segment ----
     setStep("tts", "run");
-    log("rc", `4️⃣ အသံထွက်နေပါတယ် (Edge TTS — ${voice})…`);
+    const useGeminiTTS = voice.startsWith("gemini:");
+    const gVoice = useGeminiTTS ? voice.slice(7) : null;
+    const gKey = (getKeys() || {}).gemini || "";
+    log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (${useGeminiTTS ? "Gemini TTS \u2014 " + gVoice : "Edge TTS \u2014 " + voice})\u2026`);
     const segPieces = segments.map(() => []);
     let ttsFailed = null;
     for (let i = 0; i < segments.length; i++) {
@@ -655,7 +658,14 @@ $("startRecap").addEventListener("click", async () => {
           let b = null, terr = null;
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
-              b = await edgeTTS(pc, voice);
+              b = useGeminiTTS ? await geminiTTS(pc, gVoice, gKey) : await edgeTTS(pc, voice);
+              if (useGeminiTTS && b && b.type === "audio/wav") {
+                await ff.writeFile("gt.wav", await fetchFile(b));
+                await ff.exec(["-i", "gt.wav", "-c:a", "libmp3lame", "-b:a", "128k", "gt.mp3"]);
+                const gd = await ff.readFile("gt.mp3");
+                b = new Blob([gd], { type: "audio/mpeg" });
+                try { await ff.deleteFile("gt.wav"); await ff.deleteFile("gt.mp3"); } catch (_) {}
+              }
               if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
               terr = null;
               break;
