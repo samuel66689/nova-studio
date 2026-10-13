@@ -4,3 +4,14 @@ services:
     env: static
     buildCommand: ""
     staticPublishPath: .
+  - type: web
+    name: nova-tts
+    env: node
+    plan: free
+    rootDir: tts-server
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    envVars:
+      - key: ALLOWED_ORIGIN
+        value: https://nova-studio-qfco.onrender.com
