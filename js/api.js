@@ -137,11 +137,18 @@ export async function geminiTranscribe(mp3Blob) {
     ]}],
     generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
   };
-  const res = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-    { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
-  );
-  if (!res.ok) throw new Error("Gemini transcribe error " + res.status);
+  let res = null, terr = null;
+  for (const m of ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]) {
+    try {
+      res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
+        { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
+      );
+      if (!res.ok) throw new Error("Gemini transcribe error " + res.status);
+      break;
+    } catch (e) { terr = e; res = null; }
+  }
+  if (!res) throw terr || new Error("Gemini transcribe မအောင်မြင်ပါ");
   const j = await res.json();
   const text = ((j.candidates || [])[0] || {}).content?.parts
     ?.map((p) => p.text || "").join("") || "";
@@ -199,7 +206,7 @@ const RECAP_VISION_SYSTEM = [
 
 /** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
 export async function geminiRecapScriptVision(frames, transcriptText) {
-  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+  const models = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
   let lastErr = null;
   for (const m of models) {
     try {
@@ -216,6 +223,7 @@ export async function geminiRecapScriptVision(frames, transcriptText) {
       return segs;
     } catch (e) {
       lastErr = e;
+      try { console.warn("[gemini] model", m, "failed:", String(e.message || e).slice(0, 200)); } catch (_) {}
     }
   }
   throw lastErr;
@@ -265,7 +273,7 @@ export async function extractSceneFrames(file, maxFrames, onprog) {
 
 /** Returns [{start,end,text}] recap segments. Tries 2.0-flash then 2.5-flash. */
 export async function geminiRecapScript(transcriptText) {
-  const models = ["gemini-2.5-flash", "gemini-2.0-flash"];
+  const models = ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
   let lastErr = null;
   for (const m of models) {
     try {
@@ -278,6 +286,7 @@ export async function geminiRecapScript(transcriptText) {
       return segs;
     } catch (e) {
       lastErr = e;
+      try { console.warn("[gemini] model", m, "failed:", String(e.message || e).slice(0, 200)); } catch (_) {}
     }
   }
   throw lastErr;
