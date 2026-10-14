@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014i";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014i";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014j";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014j";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014i";
+} from "./js/api.js?v=20261014j";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -711,6 +711,40 @@ function splitLongText(text, maxLen) {
   if (cur.trim()) out.push(cur.trim());
   return out.length ? out : [text];
 }
+
+// ---- voice preview: play a short sample in the selected voice ----
+$("previewVoice").addEventListener("click", async () => {
+  const voice = $("rcVoice").value;
+  const sample = "မင်္ဂလာပါ။ ဒါက အသံ စမ်းသပ်ခြင်း ဖြစ်ပါတယ်။";
+  const btn = $("previewVoice");
+  btn.disabled = true;
+  const oldT = btn.textContent;
+  btn.textContent = "⏳…";
+  try {
+    let blob = null;
+    if (voice.startsWith("gemini:")) {
+      const gKey = (getKeys() || {}).gemini || "";
+      if (!gKey) { alert("Gemini API key အရင်ထည့်ပါ"); return; }
+      blob = await geminiTTS(sample, voice.slice(7), gKey);
+    } else {
+      try { blob = await serverEdgeTTS(sample, voice); }
+      catch (_) { blob = await edgeTTS(sample, voice); }
+    }
+    if (blob && blob.size > 0) {
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } else {
+      alert("အသံထုတ်မရပါ");
+    }
+  } catch (e) {
+    alert("အမှား: " + (e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = oldT;
+  }
+});
 
 $("startRecap").addEventListener("click", async () => {
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
