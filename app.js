@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014h";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014h";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014i";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014i";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014h";
+} from "./js/api.js?v=20261014i";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -519,10 +519,21 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     const ssegs = segments.map((s, i) => ({ start: s.start, end: s.end, _i: i }))
       .sort((a, b) => a.start - b.start);
     const ACtx = new (window.AudioContext || window.webkitAudioContext)();
-    async function mp3Duration(u8) {
+    async function mp3Duration(u8, byteLen, segNo) {
       const copy = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-      const dec = await ACtx.decodeAudioData(copy);
-      return dec.duration;
+      try {
+        const dec = await Promise.race([
+          ACtx.decodeAudioData(copy),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("decode-timeout")), 15000))
+        ]);
+        return dec.duration;
+      } catch (e) {
+        // Fallback: estimate from file size (Edge TTS ~48kbps mono MP3).
+        // decodeAudioData can hang on mobile browsers; don't stall the pipeline.
+        const est = Math.max(0.5, (byteLen * 8) / 48000);
+        log("rc", `⚠️ အပိုင်း ${segNo}: duration တိုင်းမရလို့ ခန့်မှန်းသုံးပါတယ်`, "err");
+        return est;
+      }
     }
     const encB = new TextEncoder();
     const segFiles = []; // {file, start, dur} sorted by start
@@ -543,7 +554,7 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
         await ff.deleteFile("splist" + k + ".txt");
       }
       const raw = await ff.readFile("seg" + k + ".mp3");
-      const dur = await mp3Duration(raw);
+      const dur = await mp3Duration(raw, raw.byteLength, k + 1);
       const win = Math.max(0.5, seg.end - seg.start);
       const filt = [];
       let outDur = dur;
