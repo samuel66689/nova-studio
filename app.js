@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014g";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014g";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014h";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014h";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014g";
+} from "./js/api.js?v=20261014h";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -507,146 +507,153 @@ $("extractAudio").addEventListener("click", async () => {
 
 // ---- step 5 extracted: timestamp sync mux (retryable without re-doing TTS) ----
 async function doRecapMux(ff, segments, segPieces, baseName) {
+  // Memory-safe sync: NO adelay+amix (amix buffers all 17 full-timeline inputs
+  // in WASM memory -> OOM on phones). Instead: per-segment atempo/atrim only,
+  // then build the timeline with silence gaps + concat (sequential, low memory).
   let muxPhase = "init";
   try {
-  // ---- step 5: timestamp sync mux (measure → 1.3x/trim → adelay → amix → mux) ----
-  // Audio Dub Studio rule: TTS duration ကို တိုင်း, 1.3x အထိမြန်, ကျန်တာ ဖြတ်
-  setStep("mux", "run");
-  setProgress("rc", 86, "အသံကို ရုပ်နဲ့ sync လုပ်နေပါတယ်…");
-  muxPhase = "segments";
-  log("rc", "5️⃣ အသံကို timestamp နေရာအတိအကျ ချနေပါတယ်…");
-  const ssegs = segments.map((s, i) => ({ start: s.start, end: s.end, _i: i }))
-    .sort((a, b) => a.start - b.start);
-  const ACtx = new (window.AudioContext || window.webkitAudioContext)();
-  let acClosed = false;
-  async function mp3Duration(u8) {
-    const copy = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-    const dec = await ACtx.decodeAudioData(copy);
-    return dec.duration;
-  }
-  const encB = new TextEncoder();
-  const placed = [];
-  for (let k = 0; k < ssegs.length; k++) {
-    const seg = ssegs[k];
-    const pieces = segPieces[seg._i];
-    if (pieces.length === 1) {
-      await ff.writeFile("seg" + k + ".mp3", await fetchFile(pieces[0]));
-    } else {
-      const lt = pieces.map((_, j) => "file 'sp" + k + "_" + j + ".mp3'").join("\n");
-      await ff.writeFile("splist" + k + ".txt", encB.encode(lt));
-      for (let j = 0; j < pieces.length; j++) {
-        await ff.writeFile("sp" + k + "_" + j + ".mp3", await fetchFile(pieces[j]));
-      }
-      await ff.exec(["-f", "concat", "-safe", "0", "-i", "splist" + k + ".txt",
-        "-c", "copy", "seg" + k + ".mp3"]);
-      for (let j = 0; j < pieces.length; j++) { try { await ff.deleteFile("sp" + k + "_" + j + ".mp3"); } catch (_) {} }
-      await ff.deleteFile("splist" + k + ".txt");
+    setStep("mux", "run");
+    setProgress("rc", 86, "အသံကို ရုပ်နဲ့ sync လုပ်နေပါတယ်…");
+    muxPhase = "segments";
+    log("rc", "5️⃣ အသံကို timestamp နေရာအတိအကျ ချနေပါတယ်…");
+    const ssegs = segments.map((s, i) => ({ start: s.start, end: s.end, _i: i }))
+      .sort((a, b) => a.start - b.start);
+    const ACtx = new (window.AudioContext || window.webkitAudioContext)();
+    async function mp3Duration(u8) {
+      const copy = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+      const dec = await ACtx.decodeAudioData(copy);
+      return dec.duration;
     }
-    const raw = await ff.readFile("seg" + k + ".mp3");
-    const dur = await mp3Duration(raw);
-    const win = Math.max(0.5, seg.end - seg.start);
-    const filt = [];
-    if (dur > win + 0.05) {
-      const rate = Math.min(dur / win, 1.3);
-      if (rate > 1.001) filt.push("atempo=" + rate.toFixed(3));
-      if (dur / rate > win + 0.05) {
-        filt.push("atrim=0:" + win.toFixed(2));
-        log("rc", `⚠️ အပိုင်း ${k + 1}: အသံရှည်လွန်းလို့ ${win.toFixed(1)}s မှာ ဖြတ်လိုက်ပါတယ်`, "err");
-      } else if (rate > 1.001) {
-        log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
+    const encB = new TextEncoder();
+    const segFiles = []; // {file, start, dur} sorted by start
+    for (let k = 0; k < ssegs.length; k++) {
+      const seg = ssegs[k];
+      const pieces = segPieces[seg._i];
+      if (pieces.length === 1) {
+        await ff.writeFile("seg" + k + ".mp3", await fetchFile(pieces[0]));
+      } else {
+        const lt = pieces.map((_, j) => "file 'sp" + k + "_" + j + ".mp3'").join("\n");
+        await ff.writeFile("splist" + k + ".txt", encB.encode(lt));
+        for (let j = 0; j < pieces.length; j++) {
+          await ff.writeFile("sp" + k + "_" + j + ".mp3", await fetchFile(pieces[j]));
+        }
+        await ff.exec(["-f", "concat", "-safe", "0", "-i", "splist" + k + ".txt",
+          "-c", "copy", "seg" + k + ".mp3"]);
+        for (let j = 0; j < pieces.length; j++) { try { await ff.deleteFile("sp" + k + "_" + j + ".mp3"); } catch (_) {} }
+        await ff.deleteFile("splist" + k + ".txt");
       }
+      const raw = await ff.readFile("seg" + k + ".mp3");
+      const dur = await mp3Duration(raw);
+      const win = Math.max(0.5, seg.end - seg.start);
+      const filt = [];
+      let outDur = dur;
+      if (dur > win + 0.05) {
+        const rate = Math.min(dur / win, 1.3);
+        if (rate > 1.001) filt.push("atempo=" + rate.toFixed(3));
+        if (dur / rate > win + 0.05) {
+          filt.push("atrim=0:" + win.toFixed(2));
+          outDur = win;
+          log("rc", `⚠️ အပိုင်း ${k + 1}: အသံရှည်လွန်းလို့ ${win.toFixed(1)}s မှာ ဖြတ်လိုက်ပါတယ်`, "err");
+        } else {
+          outDur = dur / rate;
+          if (rate > 1.001) log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
+        }
+      }
+      if (filt.length) {
+        await ff.exec(["-i", "seg" + k + ".mp3", "-filter:a", filt.join(","), "seg" + k + "p.mp3"]);
+        await ff.deleteFile("seg" + k + ".mp3");
+        segFiles.push({ file: "seg" + k + "p.mp3", start: seg.start, dur: outDur });
+      } else {
+        segFiles.push({ file: "seg" + k + ".mp3", start: seg.start, dur: outDur });
+      }
+      setProgress("rc", 86 + ((k + 1) / ssegs.length) * 4, `sync လုပ်နေပါတယ်… (${k + 1}/${ssegs.length})`);
     }
-    const dms = Math.max(0, Math.round(seg.start * 1000));
-    filt.push("adelay=" + dms + "|" + dms);
-    await ff.exec(["-i", "seg" + k + ".mp3", "-filter:a", filt.join(","), "seg" + k + "f.mp3"]);
-    await ff.deleteFile("seg" + k + ".mp3");
-    placed.push("seg" + k + "f.mp3");
-    setProgress("rc", 86 + ((k + 1) / ssegs.length) * 4, `sync လုပ်နေပါတယ်… (${k + 1}/${ssegs.length})`);
-  }
-  // mix all placed segments into one timeline
-  muxPhase = "amix";
-  setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်…");
-  const mx = [];
-  placed.forEach((f) => { mx.push("-i", f); });
-  mx.push("-filter_complex", "amix=inputs=" + placed.length + ":duration=longest:normalize=0", "mixed.mp3");
-  await ff.exec(mx);
-  for (const f of placed) { try { await ff.deleteFile(f); } catch (_) {} }
-  // pad narration to video length so the video never gets cut
-  const vdur = await new Promise((res) => {
-    const v = document.createElement("video");
-    v.preload = "metadata";
-    v.onloadedmetadata = () => { const d = v.duration || 0; URL.revokeObjectURL(v.src); res(d); };
-    v.onerror = () => res(0);
-    v.src = URL.createObjectURL(rcFile);
-  });
-  if (vdur > 0) {
-    await ff.exec(["-i", "mixed.mp3", "-filter:a", "apad=whole_dur=" + vdur.toFixed(2),
-      "-c:a", "aac", "narr.mp3"]);
-  } else {
-    await ff.exec(["-i", "mixed.mp3", "-c:a", "aac", "narr.mp3"]);
-  }
-  muxPhase = "apad";
-  await ff.deleteFile("mixed.mp3");
-  
-  setProgressHandler((p) => setProgress("rc", 94 + p * 6, "video နဲ့ တွဲနေပါတယ်…"));
-  muxPhase = "remux-write";
-  await ff.writeFile("input.mp4", await fetchFile(rcFile));
-  muxPhase = "remux-exec";
-  await ff.exec(["-i", "input.mp4", "-i", "narr.mp3",
-    "-map", "0:v:0", "-map", "1:a:0",
-    "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-    "-movflags", "+faststart", "recap.mp4"]);
-  muxPhase = "readout";
-  // peak-memory fix: free the big inputs BEFORE reading the output back.
-  // (readFile needs ~1x video size; holding input.mp4 + recap.mp4 + the read
-  //  buffer at once OOMs phones.)
-  for (const n of ["input.mp4", "narr.mp3"]) {
-    try { await ff.deleteFile(n); } catch (_) {}
-  }
-  const vdata = await ff.readFile("recap.mp4");
-  const vblob = new Blob([vdata], { type: "video/mp4" });
-  try { await ff.deleteFile("recap.mp4"); } catch (_) {}
-  
-  try { await ACtx.close(); } catch (_) {}
-  const srt = segmentsToSRT(segments);
-  const srtBlob = new Blob([srt], { type: "text/plain" });
-  const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-  
-  const r1 = dlRow(baseName + "_recap.mp4", vblob); $("rcResults").appendChild(r1.row);
-  const r2 = dlRow(baseName + "_recap.srt", srtBlob); $("rcResults").appendChild(r2.row);
-  const r3 = dlRow(baseName + "_script.txt", txtBlob); $("rcResults").appendChild(r3.row);
-  
-  // Handoff: open the recap output in the Video Editor
-  rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
-  const handBtn = document.createElement("button");
-  handBtn.className = "ghost";
-  handBtn.textContent = "✏️ Video Editor မှာ ဆက်ပြင်";
-  handBtn.onclick = () => {
-    if (!rcHandoff) return;
-    setEditorInput(rcHandoff.blob, rcHandoff.name);
-    document.querySelector('.tab-btn[data-tab="editor"]').click();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-  $("rcResults").appendChild(handBtn);
-  
-  // per-segment Web Speech preview buttons (QC)
-  const prevWrap = document.createElement("div");
-  prevWrap.className = "hint";
-  prevWrap.textContent = "အသံအစမ်းနားထောင်ရန် (Web Speech): ";
-  segments.forEach((s, i) => {
-    const b = document.createElement("button");
-    b.className = "ghost";
-    b.style.cssText = "padding:6px 10px;min-height:0;font-size:13px;margin:4px 4px 0 0;";
-    b.textContent = "🔊 " + (i + 1);
-    b.onclick = () => previewWithWebSpeech(s.text);
-    prevWrap.appendChild(b);
-  });
-  $("rcResults").appendChild(prevWrap);
-  
-  setProgress("rc", 100, "ပြီးပါပြီ ✅");
-  log("rc", "🎉 Recap video ပြီးပါပြီ!", "ok");
-  setStep("mux", "done");
-  
+    try { await ACtx.close(); } catch (_) {}
+
+    // ---- build timeline: silence gaps + segments, concat (no amix) ----
+    muxPhase = "concat";
+    setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်…");
+    const inArgs = [];
+    const labels = [];
+    let t = 0;
+    segFiles.forEach((sf) => {
+      if (sf.start > t + 0.05) {
+        const gap = sf.start - t;
+        inArgs.push("-f", "lavfi", "-i", "aevalsrc=0:d=" + gap.toFixed(2));
+        const si = inArgs.filter((a) => a === "-i").length - 1;
+        labels.push("[" + si + ":a]aformat=sample_rates=44100:channel_layouts=stereo[sil" + si + "];");
+        labels.push("[sil" + si + "]");
+        t = sf.start;
+      }
+      inArgs.push("-i", sf.file);
+      const ai = inArgs.filter((a) => a === "-i").length - 1;
+      labels.push("[" + ai + ":a]aformat=sample_rates=44100:channel_layouts=stereo[a" + ai + "];");
+      labels.push("[a" + ai + "]");
+      t = Math.max(t, sf.start + sf.dur);
+    });
+    // video duration for final pad
+    const vdur = await new Promise((res) => {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.onloadedmetadata = () => { const d = v.duration || 0; URL.revokeObjectURL(v.src); res(d); };
+      v.onerror = () => res(0);
+      v.src = URL.createObjectURL(rcFile);
+    });
+    const nParts = labels.filter((l) => !l.endsWith(";")).length;
+    const concatFilter = labels.join("") + "concat=n=" + nParts + ":v=0:a=1" +
+      (vdur > 0 ? ",apad=whole_dur=" + vdur.toFixed(2) : ",apad");
+    await ff.exec([...inArgs, "-filter_complex", concatFilter, "-c:a", "aac", "narr.mp3"]);
+    for (const sf of segFiles) { try { await ff.deleteFile(sf.file); } catch (_) {} }
+
+    // ---- mux with video ----
+    muxPhase = "remux-write";
+    setProgressHandler((p) => setProgress("rc", 94 + p * 6, "video နဲ့ တွဲနေပါတယ်…"));
+    await ff.writeFile("input.mp4", await fetchFile(rcFile));
+    muxPhase = "remux-exec";
+    await ff.exec(["-i", "input.mp4", "-i", "narr.mp3",
+      "-map", "0:v:0", "-map", "1:a:0",
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart", "recap.mp4"]);
+    muxPhase = "readout";
+    for (const n of ["input.mp4", "narr.mp3"]) {
+      try { await ff.deleteFile(n); } catch (_) {}
+    }
+    const vdata = await ff.readFile("recap.mp4");
+    const vblob = new Blob([vdata], { type: "video/mp4" });
+    try { await ff.deleteFile("recap.mp4"); } catch (_) {}
+
+    const srt = segmentsToSRT(segments);
+    const srtBlob = new Blob([srt], { type: "text/plain" });
+    const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+
+    const r1 = dlRow(baseName + "_recap.mp4", vblob); $("rcResults").appendChild(r1.row);
+    const r2 = dlRow(baseName + "_recap.srt", srtBlob); $("rcResults").appendChild(r2.row);
+    const r3 = dlRow(baseName + "_script.txt", txtBlob); $("rcResults").appendChild(r3.row);
+
+    rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
+    const handBtn = document.createElement("button");
+    handBtn.className = "ghost";
+    handBtn.textContent = "✏️ Video Editor မှာ ဆက်ပြင်";
+    handBtn.onclick = () => {
+      if (!rcHandoff) return;
+      setEditorInput(rcHandoff.blob, rcHandoff.name);
+      document.querySelector('.tab-btn[data-tab="editor"]').click();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    $("rcResults").appendChild(handBtn);
+
+    const prevWrap = document.createElement("div");
+    prevWrap.className = "hint";
+    prevWrap.textContent = "အသံအစမ်းနားထောင်ရန် (Web Speech): ";
+    segments.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.className = "ghost";
+      b.style.cssText = "padding:6px 10px;min-height:0;font-size:13px;margin:4px 4px 0 0;";
+      b.textContent = "🔊 " + (i + 1);
+      b.onclick = () => previewWithWebSpeech(s.text);
+      prevWrap.appendChild(b);
+    });
+    $("rcResults").appendChild(prevWrap);
   } catch (e) {
     log("rc", "❌ sync phase [" + muxPhase + "] မှာ error: " + (e.message || e), "err");
     throw e;
