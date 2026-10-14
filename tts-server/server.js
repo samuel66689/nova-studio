@@ -36,19 +36,18 @@ def main():
         with open(fp, "wb") as f:
             f.write(base64.b64decode(s["b64"]))
         inputs += ["-i", fp]
-        # build per-input chain: atempo/atrim then adelay
+        # build per-input chain: atempo, then apad to window duration.
+        # (No adelay/amix — apad+concat is sequential, minimal memory.
+        #  This is the key insight from Automation Nova's approach.)
         chain = f"[{i}:a]"
         rate = float(s.get("rate") or 1)
         if rate > 1.001:
             chain += f"atempo={rate:.3f},"
-        win = float(s["end"]) - float(s["start"])
-        # trim if still over (safety)
-        # adelay to position
-        dms = int(max(0, float(s["start"])) * 1000)
-        chain += f"aformat=sample_rates=44100:channel_layouts=stereo,adelay={dms}|{dms}[a{i}];"
+        win = max(0.5, float(s["end"]) - float(s["start"]))
+        chain += f"aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={win:.2f}[a{i}];"
         fc_parts.append(chain)
     mix_labels = "".join(f"[a{i}]" for i in range(len(segs)))
-    fc = "".join(fc_parts) + f"{mix_labels}amix=inputs={len(segs)}:duration=longest:normalize=0"
+    fc = "".join(fc_parts) + f"{mix_labels}concat=n={len(segs)}:v=0:a=1"
     if video_dur > 0:
         fc += f",apad=whole_dur={video_dur:.2f}"
     out = os.path.join(tmpd, "narr.mp3")
