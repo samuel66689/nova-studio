@@ -36,15 +36,15 @@ def main():
         with open(fp, "wb") as f:
             f.write(base64.b64decode(s["b64"]))
         inputs += ["-i", fp]
-        # build per-input chain: atempo, then apad to window duration.
-        # (No adelay/amix — apad+concat is sequential, minimal memory.
-        #  This is the key insight from Automation Nova's approach.)
+        # Simple: atempo (if needed), then sequential concat.
+        # No per-segment timestamp placement — the narration plays as one
+        # continuous voiceover (Automation Nova approach: single voice file).
+        # This avoids the WASM memory wall entirely.
         chain = f"[{i}:a]"
         rate = float(s.get("rate") or 1)
         if rate > 1.001:
             chain += f"atempo={rate:.3f},"
-        win = max(0.5, float(s["end"]) - float(s["start"]))
-        chain += f"aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur={win:.2f}[a{i}];"
+        chain += f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}];"
         fc_parts.append(chain)
     mix_labels = "".join(f"[a{i}]" for i in range(len(segs)))
     fc = "".join(fc_parts) + f"{mix_labels}concat=n={len(segs)}:v=0:a=1"
