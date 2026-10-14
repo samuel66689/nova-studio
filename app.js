@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014k";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014k";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014l";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014l";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014k";
+} from "./js/api.js?v=20261014l";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -536,96 +536,40 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
       }
     }
     const encB = new TextEncoder();
-    const segFiles = []; // {file, start, dur, atempo, atrim} sorted by start
+    // ---- measure durations, then SERVER-SIDE mix (browser FFmpeg can't handle it reliably) ----
+    muxPhase = "servermix";
+    setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်… (server)");
+    log("rc", "🔗 အသံတွေ server ပေါ်မှာ ပေါင်းနေပါတယ်…");
+    const mixSegs = [];
     for (let k = 0; k < ssegs.length; k++) {
       const seg = ssegs[k];
       const pieces = segPieces[seg._i];
-      // For multi-piece segments, we still need concat — but do it via the
-      // final filter_complex instead of a separate exec. Write pieces as-is.
-      const pieceFiles = [];
-      for (let j = 0; j < pieces.length; j++) {
-        const pf = "seg" + k + "_" + j + ".mp3";
-        await ff.writeFile(pf, await fetchFile(pieces[j]));
-        pieceFiles.push(pf);
-      }
-      // Measure duration from the first piece (or concat estimate).
-      // Use the largest piece for duration estimate; we'll refine in filter.
-      const raw = await ff.readFile(pieceFiles[0]);
-      const dur0 = await mp3Duration(raw, raw.byteLength, k + 1);
-      // Estimate total duration: sum of pieces (rough; atempo applied in filter)
-      let totalDur = dur0;
-      if (pieceFiles.length > 1) {
-        // Quick estimate: assume similar sizes
-        let totalBytes = 0;
-        for (const pf of pieceFiles) {
-          try { const d = await ff.readFile(pf); totalBytes += d.byteLength; } catch (_) {}
-        }
-        totalDur = Math.max(0.5, (totalBytes * 8) / 48000);
-      }
+      // Combine pieces into one blob for duration measurement
+      const blob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+      const buf = await blob.arrayBuffer();
+      const u8 = new Uint8Array(buf);
+      const dur = await mp3Duration(u8, u8.byteLength, k + 1);
       const win = Math.max(0.5, seg.end - seg.start);
-      let atempo = null, atrim = null, outDur = totalDur;
-      if (totalDur > win + 0.05) {
-        const rate = Math.min(totalDur / win, 1.3);
-        if (rate > 1.001) atempo = rate;
-        if (totalDur / rate > win + 0.05) {
-          atrim = win;
-          outDur = win;
+      let rate = 1;
+      if (dur > win + 0.05) {
+        rate = Math.min(dur / win, 1.3);
+        if (dur / rate > win + 0.05) {
           log("rc", `⚠️ အပိုင်း ${k + 1}: အသံရှည်လွန်းလို့ ${win.toFixed(1)}s မှာ ဖြတ်လိုက်ပါတယ်`, "err");
-        } else {
-          outDur = totalDur / rate;
-          if (rate > 1.001) log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
+        } else if (rate > 1.001) {
+          log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
         }
       }
-      segFiles.push({ files: pieceFiles, start: seg.start, dur: outDur, atempo, atrim });
-      setProgress("rc", 86 + ((k + 1) / ssegs.length) * 4, `sync လုပ်နေပါတယ်… (${k + 1}/${ssegs.length})`);
+      // base64 for server
+      const b64 = await new Promise((res) => {
+        const r = new FileReader();
+        r.onload = () => res(String(r.result).split(",")[1]);
+        r.readAsDataURL(blob);
+      });
+      mixSegs.push({ b64, start: seg.start, end: seg.end, rate });
+      setProgress("rc", 91 + ((k + 1) / ssegs.length) * 2, `ပြင်ဆင်နေပါတယ်… (${k + 1}/${ssegs.length})`);
     }
     try { await ACtx.close(); } catch (_) {}
-
-    // ---- build timeline: silence gaps + segments, concat (single exec, no per-seg exec) ----
-    muxPhase = "concat";
-    setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်…");
-    log("rc", "🔗 အသံတွေ တစ်ဆက်တည်း ပေါင်းနေပါတယ်…");
-    const inArgs = [];
-    const filterParts = [];
-    const concatLabels = [];
-    let t = 0;
-    const addInput = () => inArgs.filter((a) => a === "-i").length - 1;
-    segFiles.forEach((sf) => {
-      if (sf.start > t + 0.05) {
-        const gap = sf.start - t;
-        inArgs.push("-f", "lavfi", "-i", "aevalsrc=0:d=" + gap.toFixed(2));
-        const si = addInput();
-        filterParts.push("[" + si + ":a]aformat=sample_rates=44100:channel_layouts=stereo[sil" + si + "];");
-        concatLabels.push("[sil" + si + "]");
-        t = sf.start;
-      }
-      // segment: one or more pieces -> concat pieces first (if needed), then atempo/atrim
-      const segLabel = "seg" + concatLabels.length;
-      if (sf.files.length === 1) {
-        inArgs.push("-i", sf.files[0]);
-        const ai = addInput();
-        let chain = "[" + ai + ":a]";
-        if (sf.atempo) chain += "atempo=" + sf.atempo.toFixed(3) + ",";
-        if (sf.atrim) chain += "atrim=0:" + sf.atrim.toFixed(2) + ",";
-        chain += "aformat=sample_rates=44100:channel_layouts=stereo[" + segLabel + "];";
-        filterParts.push(chain);
-      } else {
-        // multi-piece: concat pieces via filter, then atempo/atrim
-        const pieceLabels = [];
-        sf.files.forEach((pf) => {
-          inArgs.push("-i", pf);
-          const pi = addInput();
-          pieceLabels.push("[" + pi + ":a]");
-        });
-        let chain = pieceLabels.join("") + "concat=n=" + pieceLabels.length + ":v=0:a=1";
-        if (sf.atempo) chain += ",atempo=" + sf.atempo.toFixed(3);
-        if (sf.atrim) chain += ",atrim=0:" + sf.atrim.toFixed(2);
-        chain += ",aformat=sample_rates=44100:channel_layouts=stereo[" + segLabel + "];";
-        filterParts.push(chain);
-      }
-      concatLabels.push("[" + segLabel + "]");
-      t = Math.max(t, sf.start + sf.dur);
-    });
+    // video duration for final pad
     // video duration for final pad
     const vdur = await new Promise((res) => {
       const v = document.createElement("video");
@@ -634,17 +578,18 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
       v.onerror = () => res(0);
       v.src = URL.createObjectURL(rcFile);
     });
-    const concatFilter = filterParts.join("") + concatLabels.join("") +
-      "concat=n=" + concatLabels.length + ":v=0:a=1" +
-      (vdur > 0 ? ",apad=whole_dur=" + vdur.toFixed(2) : ",apad");
-    // Timeout guard: don't hang forever on the big concat
-    await Promise.race([
-      ff.exec([...inArgs, "-filter_complex", concatFilter, "-c:a", "aac", "narr.mp3"]),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("concat-timeout")), 180000))
-    ]);
-    for (const sf of segFiles) {
-      for (const pf of sf.files) { try { await ff.deleteFile(pf); } catch (_) {} }
+    // Send to server for mixing
+    const mixResp = await fetch(TTS_SERVER + "/api/mix", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segments: mixSegs, videoDur: vdur })
+    });
+    if (!mixResp.ok) {
+      const t = await mixResp.text();
+      throw new Error("server mix failed: " + t.slice(0, 200));
     }
+    const narrBlob = await mixResp.blob();
+    await ff.writeFile("narr.mp3", await fetchFile(narrBlob));
 
     // ---- mux with video ----
     muxPhase = "remux-write";
