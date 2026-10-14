@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014j";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014j";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014k";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014k";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014j";
+} from "./js/api.js?v=20261014k";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -536,70 +536,94 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
       }
     }
     const encB = new TextEncoder();
-    const segFiles = []; // {file, start, dur} sorted by start
+    const segFiles = []; // {file, start, dur, atempo, atrim} sorted by start
     for (let k = 0; k < ssegs.length; k++) {
       const seg = ssegs[k];
       const pieces = segPieces[seg._i];
-      if (pieces.length === 1) {
-        await ff.writeFile("seg" + k + ".mp3", await fetchFile(pieces[0]));
-      } else {
-        const lt = pieces.map((_, j) => "file 'sp" + k + "_" + j + ".mp3'").join("\n");
-        await ff.writeFile("splist" + k + ".txt", encB.encode(lt));
-        for (let j = 0; j < pieces.length; j++) {
-          await ff.writeFile("sp" + k + "_" + j + ".mp3", await fetchFile(pieces[j]));
-        }
-        await ff.exec(["-f", "concat", "-safe", "0", "-i", "splist" + k + ".txt",
-          "-c", "copy", "seg" + k + ".mp3"]);
-        for (let j = 0; j < pieces.length; j++) { try { await ff.deleteFile("sp" + k + "_" + j + ".mp3"); } catch (_) {} }
-        await ff.deleteFile("splist" + k + ".txt");
+      // For multi-piece segments, we still need concat — but do it via the
+      // final filter_complex instead of a separate exec. Write pieces as-is.
+      const pieceFiles = [];
+      for (let j = 0; j < pieces.length; j++) {
+        const pf = "seg" + k + "_" + j + ".mp3";
+        await ff.writeFile(pf, await fetchFile(pieces[j]));
+        pieceFiles.push(pf);
       }
-      const raw = await ff.readFile("seg" + k + ".mp3");
-      const dur = await mp3Duration(raw, raw.byteLength, k + 1);
+      // Measure duration from the first piece (or concat estimate).
+      // Use the largest piece for duration estimate; we'll refine in filter.
+      const raw = await ff.readFile(pieceFiles[0]);
+      const dur0 = await mp3Duration(raw, raw.byteLength, k + 1);
+      // Estimate total duration: sum of pieces (rough; atempo applied in filter)
+      let totalDur = dur0;
+      if (pieceFiles.length > 1) {
+        // Quick estimate: assume similar sizes
+        let totalBytes = 0;
+        for (const pf of pieceFiles) {
+          try { const d = await ff.readFile(pf); totalBytes += d.byteLength; } catch (_) {}
+        }
+        totalDur = Math.max(0.5, (totalBytes * 8) / 48000);
+      }
       const win = Math.max(0.5, seg.end - seg.start);
-      const filt = [];
-      let outDur = dur;
-      if (dur > win + 0.05) {
-        const rate = Math.min(dur / win, 1.3);
-        if (rate > 1.001) filt.push("atempo=" + rate.toFixed(3));
-        if (dur / rate > win + 0.05) {
-          filt.push("atrim=0:" + win.toFixed(2));
+      let atempo = null, atrim = null, outDur = totalDur;
+      if (totalDur > win + 0.05) {
+        const rate = Math.min(totalDur / win, 1.3);
+        if (rate > 1.001) atempo = rate;
+        if (totalDur / rate > win + 0.05) {
+          atrim = win;
           outDur = win;
           log("rc", `⚠️ အပိုင်း ${k + 1}: အသံရှည်လွန်းလို့ ${win.toFixed(1)}s မှာ ဖြတ်လိုက်ပါတယ်`, "err");
         } else {
-          outDur = dur / rate;
+          outDur = totalDur / rate;
           if (rate > 1.001) log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
         }
       }
-      if (filt.length) {
-        await ff.exec(["-i", "seg" + k + ".mp3", "-filter:a", filt.join(","), "seg" + k + "p.mp3"]);
-        await ff.deleteFile("seg" + k + ".mp3");
-        segFiles.push({ file: "seg" + k + "p.mp3", start: seg.start, dur: outDur });
-      } else {
-        segFiles.push({ file: "seg" + k + ".mp3", start: seg.start, dur: outDur });
-      }
+      segFiles.push({ files: pieceFiles, start: seg.start, dur: outDur, atempo, atrim });
       setProgress("rc", 86 + ((k + 1) / ssegs.length) * 4, `sync လုပ်နေပါတယ်… (${k + 1}/${ssegs.length})`);
     }
     try { await ACtx.close(); } catch (_) {}
 
-    // ---- build timeline: silence gaps + segments, concat (no amix) ----
+    // ---- build timeline: silence gaps + segments, concat (single exec, no per-seg exec) ----
     muxPhase = "concat";
     setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်…");
+    log("rc", "🔗 အသံတွေ တစ်ဆက်တည်း ပေါင်းနေပါတယ်…");
     const inArgs = [];
-    const labels = [];
+    const filterParts = [];
+    const concatLabels = [];
     let t = 0;
+    const addInput = () => inArgs.filter((a) => a === "-i").length - 1;
     segFiles.forEach((sf) => {
       if (sf.start > t + 0.05) {
         const gap = sf.start - t;
         inArgs.push("-f", "lavfi", "-i", "aevalsrc=0:d=" + gap.toFixed(2));
-        const si = inArgs.filter((a) => a === "-i").length - 1;
-        labels.push("[" + si + ":a]aformat=sample_rates=44100:channel_layouts=stereo[sil" + si + "];");
-        labels.push("[sil" + si + "]");
+        const si = addInput();
+        filterParts.push("[" + si + ":a]aformat=sample_rates=44100:channel_layouts=stereo[sil" + si + "];");
+        concatLabels.push("[sil" + si + "]");
         t = sf.start;
       }
-      inArgs.push("-i", sf.file);
-      const ai = inArgs.filter((a) => a === "-i").length - 1;
-      labels.push("[" + ai + ":a]aformat=sample_rates=44100:channel_layouts=stereo[a" + ai + "];");
-      labels.push("[a" + ai + "]");
+      // segment: one or more pieces -> concat pieces first (if needed), then atempo/atrim
+      const segLabel = "seg" + concatLabels.length;
+      if (sf.files.length === 1) {
+        inArgs.push("-i", sf.files[0]);
+        const ai = addInput();
+        let chain = "[" + ai + ":a]";
+        if (sf.atempo) chain += "atempo=" + sf.atempo.toFixed(3) + ",";
+        if (sf.atrim) chain += "atrim=0:" + sf.atrim.toFixed(2) + ",";
+        chain += "aformat=sample_rates=44100:channel_layouts=stereo[" + segLabel + "];";
+        filterParts.push(chain);
+      } else {
+        // multi-piece: concat pieces via filter, then atempo/atrim
+        const pieceLabels = [];
+        sf.files.forEach((pf) => {
+          inArgs.push("-i", pf);
+          const pi = addInput();
+          pieceLabels.push("[" + pi + ":a]");
+        });
+        let chain = pieceLabels.join("") + "concat=n=" + pieceLabels.length + ":v=0:a=1";
+        if (sf.atempo) chain += ",atempo=" + sf.atempo.toFixed(3);
+        if (sf.atrim) chain += ",atrim=0:" + sf.atrim.toFixed(2);
+        chain += ",aformat=sample_rates=44100:channel_layouts=stereo[" + segLabel + "];";
+        filterParts.push(chain);
+      }
+      concatLabels.push("[" + segLabel + "]");
       t = Math.max(t, sf.start + sf.dur);
     });
     // video duration for final pad
@@ -610,11 +634,17 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
       v.onerror = () => res(0);
       v.src = URL.createObjectURL(rcFile);
     });
-    const nParts = labels.filter((l) => !l.endsWith(";")).length;
-    const concatFilter = labels.join("") + "concat=n=" + nParts + ":v=0:a=1" +
+    const concatFilter = filterParts.join("") + concatLabels.join("") +
+      "concat=n=" + concatLabels.length + ":v=0:a=1" +
       (vdur > 0 ? ",apad=whole_dur=" + vdur.toFixed(2) : ",apad");
-    await ff.exec([...inArgs, "-filter_complex", concatFilter, "-c:a", "aac", "narr.mp3"]);
-    for (const sf of segFiles) { try { await ff.deleteFile(sf.file); } catch (_) {} }
+    // Timeout guard: don't hang forever on the big concat
+    await Promise.race([
+      ff.exec([...inArgs, "-filter_complex", concatFilter, "-c:a", "aac", "narr.mp3"]),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("concat-timeout")), 180000))
+    ]);
+    for (const sf of segFiles) {
+      for (const pf of sf.files) { try { await ff.deleteFile(pf); } catch (_) {} }
+    }
 
     // ---- mux with video ----
     muxPhase = "remux-write";
