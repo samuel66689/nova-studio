@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014d";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014d";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014e";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014e";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014d";
+} from "./js/api.js?v=20261014e";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
