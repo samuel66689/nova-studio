@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014f";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014f";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014g";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014g";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014f";
+} from "./js/api.js?v=20261014g";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -597,11 +597,15 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
     "-movflags", "+faststart", "recap.mp4"]);
   muxPhase = "readout";
-  const vdata = await ff.readFile("recap.mp4");
-  const vblob = new Blob([vdata], { type: "video/mp4" });
-  for (const n of ["input.mp4", "narr.mp3", "recap.mp4"]) {
+  // peak-memory fix: free the big inputs BEFORE reading the output back.
+  // (readFile needs ~1x video size; holding input.mp4 + recap.mp4 + the read
+  //  buffer at once OOMs phones.)
+  for (const n of ["input.mp4", "narr.mp3"]) {
     try { await ff.deleteFile(n); } catch (_) {}
   }
+  const vdata = await ff.readFile("recap.mp4");
+  const vblob = new Blob([vdata], { type: "video/mp4" });
+  try { await ff.deleteFile("recap.mp4"); } catch (_) {}
   
   try { await ACtx.close(); } catch (_) {}
   const srt = segmentsToSRT(segments);
