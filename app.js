@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014e";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014e";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014f";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014f";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014e";
+} from "./js/api.js?v=20261014f";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -591,11 +591,11 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
   setProgressHandler((p) => setProgress("rc", 94 + p * 6, "video နဲ့ တွဲနေပါတယ်…"));
   muxPhase = "remux-write";
   await ff.writeFile("input.mp4", await fetchFile(rcFile));
+  muxPhase = "remux-exec";
   await ff.exec(["-i", "input.mp4", "-i", "narr.mp3",
     "-map", "0:v:0", "-map", "1:a:0",
     "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-    muxPhase = "remux-exec";
-  "-movflags", "+faststart", "recap.mp4"]);
+    "-movflags", "+faststart", "recap.mp4"]);
   muxPhase = "readout";
   const vdata = await ff.readFile("recap.mp4");
   const vblob = new Blob([vdata], { type: "video/mp4" });
