@@ -229,6 +229,22 @@
   </div>
 </section>
 
-<script type="module" src="app.js?v=20261014c"></script>
+<script>
+window.__errs = [];
+function __showErr(m) {
+  window.__errs.push(m);
+  var d = document.getElementById("js-errbox");
+  if (!d) {
+    d = document.createElement("div");
+    d.id = "js-errbox";
+    d.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#7f1d1d;color:#fff;padding:10px;font-size:12px;z-index:9999;max-height:35vh;overflow:auto;white-space:pre-wrap;";
+    document.body.appendChild(d);
+  }
+  d.textContent = window.__errs.join("\n");
+}
+window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error)); });
+window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
+</script>
+<script type="module" src="app.js?v=20261014e"></script>
 </body>
 </html>
