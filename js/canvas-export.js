@@ -218,10 +218,14 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
+  video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+  document.body.appendChild(video);
   video.src = url;
+  try { video.load(); } catch (_) {}
   await new Promise((res, rej) => {
-    video.onloadedmetadata = res;
-    video.onerror = () => rej(new Error("video ဖတ်မရပါ"));
+    const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
+    video.onloadedmetadata = () => { clearTimeout(to); res(); };
+    video.onerror = () => { clearTimeout(to); rej(new Error("video ဖတ်မရပါ")); };
   });
 
   const canvas = document.createElement("canvas");
@@ -401,6 +405,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   rec.stop();
   await recDone;
   URL.revokeObjectURL(url);
+  try { video.pause(); video.removeAttribute("src"); video.load(); video.remove(); } catch (_) {}
   try { await actx.close(); } catch (_) {}
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
