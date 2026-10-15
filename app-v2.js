@@ -908,6 +908,24 @@ function rcInitLogoDrag() {
     update();
   });
   lel.addEventListener("pointerup", () => { sx = undefined; });
+  // Resize handle for logo
+  const lrh = document.createElement("div");
+  lrh.style.cssText = "position:absolute;right:-8px;bottom:-8px;width:20px;height:20px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;";
+  lel.appendChild(lrh);
+  let lrsx, lrsy, lrsz;
+  lrh.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    lrsx = e.clientX; lrsy = e.clientY; lrsz = rcLogoPos.size;
+    lrh.setPointerCapture(e.pointerId);
+  });
+  lrh.addEventListener("pointermove", (e) => {
+    if (lrsx === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    const dx = (e.clientX - lrsx) / rect.width;
+    rcLogoPos.size = Math.max(0.05, Math.min(0.5, lrsz + dx));
+    update();
+  });
+  lrh.addEventListener("pointerup", () => { lrsx = undefined; });
   wrap.appendChild(lel);
   // Update on shape change
   $("rcLogoShape")?.addEventListener("change", update);
