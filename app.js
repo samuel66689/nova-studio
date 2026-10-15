@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
-import { canvasExport } from "./js/canvas-export.js?v=20261015a";
+import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015b";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -1038,9 +1038,45 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", `အသံအားလုံး ရပါပြီ (${segments.length} segments, ${totalPieces} ပိုင်း) ✅`, "ok");
     setStep("tts", "done");
 
-    // ---- step 5: timestamp sync mux (retryable) ----
+    // ---- step 5: sync + mux ----
     rcLastRun = { segments, segPieces, baseName };
-    await doRecapMux(ff, segments, segPieces, baseName);
+    const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
+    if (useAudioFirst) {
+      // Canvas audio-first: video adjusts to narration per segment
+      setStep("mux", "run");
+      setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
+      log("rc", "5️⃣ Video ကို အသံနဲ့ကိုက်အောင် ညှိနေပါတယ်… 🎯");
+      const wantFlip = $("rcFlip") && $("rcFlip").checked;
+      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+      // Build segments with audio blobs
+      const segsWithAudio = segments.map((s, i) => {
+        const pieces = segPieces[s._i] || segPieces[i] || [];
+        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+        return { start: s.start, end: s.end, text: s.text, audioBlob };
+      });
+      const { blob: finalBlob, ext } = await canvasRecapSync(rcFile, segsWithAudio, {
+        flip: wantFlip,
+        watermarkText: wantWm,
+        width: 720, height: 1280,
+        onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
+      });
+      // SRT + script files
+      const srt = segments.map((s, i) =>
+        `${i + 1}\n${toSRTTime(s.start)} --> ${toSRTTime(s.end)}\n${s.text}\n`).join("\n");
+      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+      const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
+      $("rcResults").appendChild(r1.row);
+      const r2 = dlRow(baseName + "_recap.srt", srtBlob);
+      $("rcResults").appendChild(r2.row);
+      const r3 = dlRow(baseName + "_script.txt", txtBlob);
+      $("rcResults").appendChild(r3.row);
+      setProgress("rc", 100, "ပြီးပါပြီ ✅");
+      log("rc", "Audio-first sync ပြီးပါပြီ ✅", "ok");
+      setStep("mux", "done");
+    } else {
+      await doRecapMux(ff, segments, segPieces, baseName);
+    }
   } catch (e) {
     log("rc", "အမှား: " + (e.message || e), "err");
     setProgress("rc", 0, "");
