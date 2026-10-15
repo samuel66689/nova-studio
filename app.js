@@ -774,6 +774,10 @@ function rcAddBlurBox() {
   const wrap = $("rcBlurWrap");
   const el = document.createElement("div");
   el.style.cssText = "position:absolute;border:2px solid #4da6ff;background:rgba(77,166,255,0.2);cursor:move;touch-action:none;";
+  // Resize handle (bottom-right)
+  const rh = document.createElement("div");
+  rh.style.cssText = "position:absolute;right:-8px;bottom:-8px;width:20px;height:20px;background:#4da6ff;border-radius:50%;cursor:nwse-resize;touch-action:none;";
+  el.appendChild(rh);
   const update = () => {
     el.style.left = (r.x * 100) + "%";
     el.style.top = (r.y * 100) + "%";
@@ -795,6 +799,21 @@ function rcAddBlurBox() {
     update();
   });
   el.addEventListener("pointerup", () => { sx = undefined; });
+  // Resize via handle
+  let rsx, rsy, rw, rh0;
+  rh.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    rsx = e.clientX; rsy = e.clientY; rw = r.w; rh0 = r.h;
+    rh.setPointerCapture(e.pointerId);
+  });
+  rh.addEventListener("pointermove", (e) => {
+    if (rsx === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    r.w = Math.max(0.05, Math.min(1 - r.x, rw + (e.clientX - rsx) / rect.width));
+    r.h = Math.max(0.05, Math.min(1 - r.y, rh0 + (e.clientY - rsy) / rect.height));
+    update();
+  });
+  rh.addEventListener("pointerup", () => { rsx = undefined; });
   wrap.appendChild(el);
   r._el = el; r._update = update;
   rcRenderBlurList();
