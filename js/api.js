@@ -125,6 +125,145 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
   return text;
 }
 
+/** Gemini Files API: upload video file, returns file URI. */
+export async function geminiUploadVideo(file, onprog) {
+  const { gemini } = getKeys();
+  if (!gemini) throw new Error("Gemini API key မထည့်ရသေးပါ");
+  // Step 1: initiate resumable upload
+  const meta = { file: { displayName: file.name || "video.mp4", mimeType: file.type || "video/mp4" } };
+  let res;
+  try {
+    res = await fetch(
+      "https://generativelanguage.googleapis.com/upload/v1beta/files",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": gemini,
+          "X-Goog-Upload-Protocol": "resumable",
+          "X-Goog-Upload-Command": "start",
+          "X-Goog-Upload-Header-Content-Length": String(file.size),
+          "X-Goog-Upload-Header-Content-Type": file.type || "video/mp4",
+        },
+        body: JSON.stringify(meta),
+      }
+    );
+  } catch (e) {
+    throw new Error("Gemini Files upload စမရပါ — internet စစ်ပါ");
+  }
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error("Files upload init error " + res.status + ": " + t.slice(0, 180));
+  }
+  const uploadUrl = res.headers.get("x-goog-upload-url");
+  if (!uploadUrl) throw new Error("Upload URL မရပါ");
+  // Step 2: upload bytes
+  const ures = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      "Content-Length": String(file.size),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: file,
+  });
+  if (!ures.ok) {
+    const t = await ures.text().catch(() => "");
+    throw new Error("Files upload error " + ures.status + ": " + t.slice(0, 180));
+  }
+  const uj = await ures.json();
+  const fileUri = uj.file && uj.file.uri;
+  const fileName = uj.file && uj.file.name;
+  if (!fileUri) throw new Error("File URI မရပါ");
+  // Step 3: wait for ACTIVE
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    if (onprog) { try { onprog(i + 1); } catch (_) {} }
+    const sres = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/" + fileName,
+      { headers: { "x-goog-api-key": gemini } }
+    );
+    if (!sres.ok) continue;
+    const sj = await sres.json();
+    const state = sj.state || (sj.file && sj.file.state);
+    if (state === "ACTIVE") return fileUri;
+    if (state === "FAILED") throw new Error("Video process မအောင်မြင်ပါ");
+  }
+  throw new Error("Video process ကြာလွန်းနေပါတယ် — ပြန်ကြိုးစားပါ");
+}
+
+/** Style prompts for recap narration. */
+export const RECAP_STYLES = {
+  story: [
+    "You are a professional Burmese recap narrator for short drama videos.",
+    "STYLE: STORY — calm, clear storytelling. Focus on plot, character motivations, and emotional beats.",
+    "Write NATURAL SPOKEN BURMESE (စကားပြောဟန်).",
+  ].join("\n"),
+  viral: [
+    "You are a professional Burmese recap narrator for short drama videos.",
+    "STYLE: VIRAL — punchy, hook-driven, high energy. Start with a shocking hook. Short sentences. Cliffhangers.",
+    "Write NATURAL SPOKEN BURMESE (စကားပြောဟန်) — exciting, like a viral TikTok narrator.",
+  ].join("\n"),
+  hybrid: [
+    "You are a professional Burmese recap narrator for short drama videos.",
+    "STYLE: HYBRID — engaging story with viral hooks at key moments. Balanced pacing.",
+    "Write NATURAL SPOKEN BURMESE (စကားပြောဟန်).",
+  ].join("\n"),
+};
+
+/** Recap from full video via Files API. style = story|viral|hybrid */
+export async function geminiRecapFromVideoFile(fileUri, style) {
+  const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"];
+  const stylePrompt = (RECAP_STYLES[style] || RECAP_STYLES.story);
+  const systemText = stylePrompt + "\n" + [
+    "You are given the FULL VIDEO. Watch it completely.",
+    "Write the recap narration to match what happens on screen — actions, dialogue, expressions, settings.",
+    "STRICT RULES:",
+    "1. NEVER use literary/formal particles: သည်, ၏, ၍, ထို့ကြောင့်, သို့သော်. Use natural spoken forms only.",
+    "2. CHARACTER IDENTITY: never mix up who is who.",
+    "3. Cover the story IN ORDER. Keep every key twist, stay concise but engaging.",
+    "4. ONLY describe what is actually visible or spoken in the video — never invent.",
+    "5. Do NOT add unnecessary dramatic/florid words.",
+    "6. Output ONLY segment lines, one per line, in this EXACT format:",
+    "[00:00-00:12] narration text here",
+    "7. Each segment must be 5 to 12 seconds of spoken narration.",
+    "8. The LAST segment may end with a short teaser hook for the next episode.",
+    "9. No Chinese, Thai or Latin characters — except brand/person names (transliterate rest).",
+    "10. No intro, no markdown, no numbering — only segment lines.",
+  ].join("\n");
+  let lastErr = null;
+  for (const m of models) {
+    try {
+      const { gemini } = getKeys();
+      const body = {
+        contents: [{ parts: [
+          { fileData: { mimeType: "video/mp4", fileUri } },
+          { text: "Watch this video completely and write the Burmese recap narration." },
+        ]}],
+        generationConfig: { temperature: 0.8, maxOutputTokens: 8192 },
+        systemInstruction: { parts: [{ text: systemText }] },
+      };
+      const res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
+        { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
+      );
+      if (!res.ok) {
+        const t = await res.text().catch(() => "");
+        throw new Error("Gemini (" + m + ") error " + res.status + ": " + t.slice(0, 180));
+      }
+      const j = await res.json();
+      const text = ((j.candidates || [])[0] || {}).content?.parts
+        ?.map((p) => p.text || "").join("") || "";
+      const segs = parseRecapSegments(text);
+      if (!segs.length) throw new Error("script format မမှန်ပါ");
+      return segs;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
 /** Gemini fallback transcription. Returns [{start,end,text}]. */
 export async function geminiTranscribe(mp3Blob) {
   const b64 = await blobToBase64(mp3Blob);
