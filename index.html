@@ -165,6 +165,7 @@
 
     <div class="row">
       <button id="startEdit">🎬 လုပ်မယ်</button>
+      <button id="canvasExportBtn" class="ghost">📹 Canvas နဲ့ ထုတ် (memory safe)</button>
       <button id="extractAudio" class="ghost">🎵 အသံထုတ်မယ် (MP3)</button>
     </div>
     <div class="pbar"><div class="pfill" id="edProgress"></div></div>
@@ -224,6 +225,17 @@
           <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
           <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
         </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>🔄 Video edit (auto)</label>
+        <div class="chk"><input type="checkbox" id="rcFlip"><span>ဘယ်ညာလှန် (flip)</span></div>
+      </div>
+      <div>
+        <label>Watermark စာသား</label>
+        <input type="text" id="rcWatermark" placeholder="sam recap" value="sam recap" style="width:100%;">
       </div>
     </div>
 
