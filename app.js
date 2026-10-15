@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
-import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015c";
+import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015d";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
