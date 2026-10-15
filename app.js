@@ -10,7 +10,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText,
-} from "./js/api.js?v=20261015i";
+} from "./js/api.js?v=20261015f";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
