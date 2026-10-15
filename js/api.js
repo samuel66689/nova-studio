@@ -371,6 +371,20 @@ async function geminiGenerate(model, systemText, userText, maxTokens) {
   return geminiGenerateParts(model, systemText, [{ text: userText }], maxTokens);
 }
 
+/** Simple text prompt via Gemini (for translations). */
+export async function geminiText(prompt, maxTokens = 8000) {
+  const keys = getKeys();
+  if (!keys.gemini) throw new Error("Gemini API key မရှိပါ");
+  const models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"];
+  let lastErr = null;
+  for (const m of models) {
+    try {
+      return await geminiGenerate(m, "", prompt, maxTokens);
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("Gemini မအောင်မြင်ပါ");
+}
+
 const RECAP_VISION_SYSTEM = [
   "You are a professional Burmese recap narrator for short drama videos.",
   "You are given SCENE FRAMES from the video (in story order, each labeled with its timestamp) PLUS the full audio transcript with timestamps.",
