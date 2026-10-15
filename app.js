@@ -6,6 +6,7 @@ import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   geminiUploadVideo, geminiRecapFromVideoFile,
+  idbSet, idbGet, idbDel,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
 } from "./js/api.js?v=20261015d";
@@ -860,6 +861,40 @@ $("rcFile").addEventListener("change", async (e) => {
   }
 });
 
+// Check for saved recap run on load
+(async () => {
+  try {
+    const saved = await idbGet("rc-last");
+    if (saved && saved.segments && saved.segPieces && (Date.now() - saved.savedAt) < 24 * 3600 * 1000) {
+      const bar = document.createElement("div");
+      bar.style.cssText = "background:#1a3a2a;border:1px solid #4caf50;border-radius:8px;padding:12px;margin:8px 0;";
+      bar.innerHTML = `<div>💾 <b>သိမ်းထားတာ ရှိတယ်</b> (${saved.segments.length} segments, ${new Date(saved.savedAt).toLocaleString()})</div>
+        <div style="margin-top:8px;display:flex;gap:8px;">
+          <button id="rcResumeBtn" style="flex:1;">▶️ ဆက်လုပ် (API ပြန်မကုန်)</button>
+          <button id="rcDiscardBtn" class="ghost">🗑️ ဖျက်</button>
+        </div>`;
+      const rcSec = document.querySelector("#rcSteps")?.parentElement;
+      if (rcSec) rcSec.insertBefore(bar, document.querySelector("#rcSteps"));
+      $("rcResumeBtn").onclick = async () => {
+        // Restore state
+        if (saved.transcript) $("rcTranscript").value = saved.transcript;
+        if (saved.script) $("rcScript").value = saved.script;
+        rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+        // Need the video file — user must re-select it
+        alert("Video file ကို ပြန်ရွေးပေးပါ (အသံက သိမ်းထားပြီးသား)");
+        bar.remove();
+        // Jump to step 5
+        setStep("tts", "done");
+        log("rc", "📂 ပြန်လည်ရယူပြီးပြီ — video ရွေးပြီး '🔄 Sync ပြန်လုပ်' နှိပ်ပါ", "ok");
+      };
+      $("rcDiscardBtn").onclick = async () => {
+        await idbDel("rc-last");
+        bar.remove();
+      };
+    }
+  } catch (e) { console.warn("resume check failed", e); }
+})();
+
 function setStep(name, cls) {
   const li = document.querySelector('#rcSteps li[data-step="' + name + '"]');
   if (li) li.className = cls || "";
@@ -1127,6 +1162,18 @@ $("startRecap").addEventListener("click", async () => {
     const totalPieces = segPieces.reduce((a, p) => a + p.length, 0);
     log("rc", `အသံအားလုံး ရပါပြီ (${segments.length} segments, ${totalPieces} ပိုင်း) ✅`, "ok");
     setStep("tts", "done");
+    // Persist to IndexedDB (survives refresh — no more wasted API calls)
+    try {
+      await idbSet("rc-last", {
+        segments, segPieces, baseName,
+        savedAt: Date.now(),
+        transcript: $("rcTranscript").value,
+        script: $("rcScript").value,
+      });
+      log("rc", "💾 သိမ်းပြီးပြီ — refresh လုပ်လည်း ပြန်စရာ မလို", "ok");
+    } catch (e) {
+      console.warn("idb save failed", e);
+    }
 
     // ---- step 5: sync + mux ----
     rcLastRun = { segments, segPieces, baseName };
