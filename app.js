@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014l";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014l";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014m";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014m";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014l";
+} from "./js/api.js?v=20261014m";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -456,6 +456,12 @@ $("startEdit").addEventListener("click", async () => {
         } else if (wmIdx >= 0) {
           cur.splice(wmIdx, 1); dropped.push("watermark");
           log("ed", "⚠️ watermark မရလို့ ကျော်ပြီး ဆက်လုပ်ပါမယ်", "err");
+        } else if (blurRegions.length > 0) {
+          // Complex blur filter failed (likely memory) — drop blur and retry
+          const n = blurRegions.length;
+          blurRegions.length = 0;
+          dropped.push("blur box (" + n + ")");
+          log("ed", "⚠️ blur filter မနိုင်လို့ ဖြုတ်ပြီး ဆက်လုပ်ပါမယ် (" + n + " box)", "err");
         } else {
           break;
         }
