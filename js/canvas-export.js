@@ -124,7 +124,7 @@ export async function canvasExport(videoBlob, opts = {}) {
     // Subtitles
     const sub = subtitles.find((s) => t >= s.start && t < s.end);
     if (sub && subOn) {
-      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
+      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick, anchor: subtitleAnchor(width, height, blurRegions, flip, subPos) });
     }
     if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
 
@@ -167,7 +167,8 @@ export async function canvasExport(videoBlob, opts = {}) {
 function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions, t) {
   for (const r of regions) {
     if (t < (r.t0 || 0) || t > (r.t1 || 9999)) continue;
-    const bx = r.x * width, by = r.y * height;
+    const fx = flip ? 1 - r.x - r.w : r.x;
+    const bx = fx * width, by = r.y * height;
     const bw = r.w * width, bh = r.h * height;
     ctx.save();
     ctx.filter = `blur(${Math.max(2, Math.min(30, r.strength || 15))}px)`;
@@ -181,122 +182,10 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
   }
 }
 
-/**
- * Add or correct WebM Duration metadata. MediaRecorder commonly omits this
- * field; editors may then mistake a long recording for only its final chunk.
- */
-export async function fixWebMDuration(blob, durationSec) {
-  if (!Number.isFinite(durationSec) || durationSec <= 0) return blob;
-  const arr = new Uint8Array(await blob.arrayBuffer());
-
-  function vintLength(firstByte) {
-    let mask = 0x80, len = 1;
-    while (len <= 8 && !(firstByte & mask)) { mask >>= 1; len++; }
-    return len <= 8 ? len : 0;
-  }
-  function readElement(pos, isId = false) {
-    if (pos >= arr.length) return null;
-    const idLen = vintLength(arr[pos]);
-    if (!idLen || pos + idLen >= arr.length) return null;
-    let id = 0n;
-    for (let i = 0; i < idLen; i++) id = (id << 8n) | BigInt(arr[pos + i]);
-    const sizePos = pos + idLen;
-    const sizeLen = vintLength(arr[sizePos]);
-    if (!sizeLen || sizePos + sizeLen > arr.length) return null;
-    let size = BigInt(arr[sizePos] & (0xff >> sizeLen));
-    for (let i = 1; i < sizeLen; i++) size = (size << 8n) | BigInt(arr[sizePos + i]);
-    const unknown = !isId && size === (1n << BigInt(7 * sizeLen)) - 1n;
-    return { id, idLen, sizeLen, size, unknown, dataStart: sizePos + sizeLen,
-      end: unknown ? arr.length : sizePos + sizeLen + Number(size) };
-  }
-  function encodeSize(size) {
-    for (let len = 1; len <= 8; len++) {
-      if (size < (1n << BigInt(7 * len)) - 1n) {
-        let n = size;
-        const out = new Uint8Array(len);
-        for (let i = len - 1; i >= 0; i--) { out[i] = Number(n & 0xffn); n >>= 8n; }
-        out[0] |= 1 << (8 - len);
-        return out;
-      }
-    }
-    throw new Error("WebM အရွယ်အစားကြီးလွန်းပါတယ်");
-  }
-  function join(parts) {
-    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
-    let at = 0;
-    for (const p of parts) { out.set(p, at); at += p.length; }
-    return out;
-  }
-
-  let segment = null;
-  for (let pos = 0; pos < arr.length - 4;) {
-    const el = readElement(pos);
-    if (!el) break;
-    if (el.id === 0x18538067n) { segment = el; break; }
-    if (el.unknown || el.end <= pos) break;
-    pos = el.end;
-  }
-  if (!segment) return blob;
-
-  let info = null;
-  for (let pos = segment.dataStart; pos < segment.end - 4;) {
-    const el = readElement(pos);
-    if (!el) break;
-    if (el.id === 0x1549A966n) { info = el; break; }
-    if (el.unknown || el.end <= pos) break;
-    pos = el.end;
-  }
-  if (!info || info.unknown || info.end > arr.length) return blob;
-
-  let scaleNs = 1_000_000; // Matroska default: one millisecond per timestamp tick.
-  let durationPos = -1, durationSize = 0;
-  for (let pos = info.dataStart; pos < info.end;) {
-    const el = readElement(pos);
-    if (!el || el.unknown || el.end > info.end || el.end <= pos) break;
-    if (el.id === 0x2ad7b1n && el.size > 0n && el.size <= 8n) {
-      scaleNs = 0;
-      for (let i = el.dataStart; i < el.end; i++) scaleNs = scaleNs * 256 + arr[i];
-    } else if (el.id === 0x4489n) {
-      durationPos = el.dataStart;
-      durationSize = Number(el.size);
-    }
-    pos = el.end;
-  }
-  const durationTicks = durationSec * 1e9 / scaleNs;
-  const durationValue = new Uint8Array(8);
-  new DataView(durationValue.buffer).setFloat64(0, durationTicks, false);
-
-  let newInfo;
-  if (durationPos >= 0) {
-    if (durationSize === 8) arr.set(durationValue, durationPos);
-    else if (durationSize === 4) new DataView(arr.buffer).setFloat32(durationPos, durationTicks, false);
-    else return blob;
-    newInfo = arr.slice(info.dataStart - info.sizeLen - info.idLen, info.end);
-  } else {
-    const payload = join([arr.slice(info.dataStart, info.end), new Uint8Array([0x44, 0x89, 0x88]), durationValue]);
-    const header = join([arr.slice(info.dataStart - info.sizeLen - info.idLen, info.dataStart - info.sizeLen), encodeSize(BigInt(payload.length))]);
-    newInfo = join([header, payload]);
-  }
-
-  const oldInfoLength = info.end - (info.dataStart - info.sizeLen - info.idLen);
-  const delta = newInfo.length - oldInfoLength;
-  const segmentIdStart = segment.dataStart - segment.sizeLen - segment.idLen;
-  const segmentId = arr.slice(segmentIdStart, segmentIdStart + segment.idLen);
-  const segmentSizeBytes = segment.unknown ? arr.slice(segmentIdStart + segment.idLen, segment.dataStart) : encodeSize(segment.size + BigInt(delta));
-  const payload = join([arr.slice(segment.dataStart, info.dataStart - info.sizeLen - info.idLen), newInfo,
-    arr.slice(info.end, segment.end)]);
-  const fixed = join([arr.slice(0, segmentIdStart), segmentId, segmentSizeBytes, payload]);
-  return new Blob([fixed], { type: "video/webm" });
-}
-
-/**
- * Video-first dubbing: video plays continuously, audio fits to original timing.
- * Output duration = video duration. Audio sped up (max 1.3x) if too long.
- */
 export async function canvasDubSync(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
-    shadeColor = "#000000", shadeThick = 4,
+    shadeColor = "#000000", shadeThick = 4, subPos = "bottom",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
   // Preload font for canvas
   try {
@@ -377,7 +266,7 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
     try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, t); } catch (_) {}
     const sub = segData.find((s) => t >= s.start && t < s.end);
     if (sub && sub.text && subOn) {
-      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
+      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick, anchor: subtitleAnchor(width, height, blurRegions, flip, subPos) });
     }
     if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
     if (onprog) { try { onprog(t / dur); } catch (_) {} }
@@ -428,57 +317,51 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
 }
 
 /** Draw styled subtitle with user options. */
-function drawStyledSubtitle(ctx, text, width, height, opts) {
-  const {
-    color = "#ffffff", size = 28, font = "Aka07",
-    shadeColor = "#000000", thickness = 4,
-  } = opts;
-  ctx.font = `bold ${size}px "${font}", sans-serif`;
-  ctx.textAlign = "center";
-  ctx.strokeStyle = shadeColor;
-  ctx.lineWidth = parseInt(thickness) || 4;
-  ctx.fillStyle = color;
-  const lines = wrapText(ctx, text, width - 40);
-  const lh = size * 1.2;
-  const y0 = height - 100 - (lines.length - 1) * lh;
+function drawStyledSubtitle(ctx, text, W, H, o) {
+  const { color="#ffffff", size=28, font="Aka07",
+          shadeColor="#000000", thickness=4, anchor } = o;
+  const a = anchor || { cx: W/2, cy: H-100, maxW: W-40 };
+  ctx.font = `bold ${size}px "${font}", "NotoSansMyanmar", sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.lineJoin = "round"; ctx.miterLimit = 2;
+  ctx.lineWidth = thickness;
+  ctx.strokeStyle = shadeColor; ctx.fillStyle = color;
+  const lines = wrapText(ctx, text, a.maxW), lh = size * 1.4;
+  const y0 = a.cy - ((lines.length - 1) * lh) / 2;
   lines.forEach((ln, i) => {
-    const y = y0 + i * lh;
-    ctx.strokeText(ln, width / 2, y);
-    ctx.fillText(ln, width / 2, y);
+    ctx.strokeText(ln, a.cx, y0 + i * lh);
+    ctx.fillText(ln, a.cx, y0 + i * lh);
   });
-  ctx.textAlign = "left";
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
 }
 
 /** Draw logo at position with shape. */
-function drawLogo(ctx, logoImg, width, height, pos, shape) {
-  if (!logoImg) return;
-  const size = pos.size * width;
-  const x = pos.x * width, y = pos.y * height;
+function drawLogo(ctx, img, W, H, pos, shape) {
+  if (!img) return;
+  const s = pos.size * W, x = pos.x * W, y = pos.y * H;
   ctx.save();
   if (shape === "circle") {
-    ctx.beginPath();
-    ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
-    ctx.clip();
+    const m = Math.min(img.naturalWidth || s, img.naturalHeight || s);
+    ctx.beginPath(); ctx.arc(x + s/2, y + s/2, s/2, 0, Math.PI * 2); ctx.clip();
+    ctx.drawImage(img, (img.naturalWidth - m)/2, (img.naturalHeight - m)/2, m, m, x, y, s, s);
+  } else {
+    const h = s * (img.naturalHeight || 1) / (img.naturalWidth || 1);
+    ctx.drawImage(img, x, y, s, h);
   }
-  ctx.drawImage(logoImg, x, y, size, size);
   ctx.restore();
 }
 
-function wrapText(ctx, text, maxWidth) {
-  const words = String(text).split(/\s+/);
-  const lines = [];
-  let cur = "";
+function wrapText(ctx, text, maxW) {
+  const words = (typeof Intl !== "undefined" && Intl.Segmenter)
+    ? [...new Intl.Segmenter("my", { granularity: "word" }).segment(String(text))].map((s) => s.segment)
+    : String(text).split(/(?<=\s)/);
+  const lines = []; let cur = "";
   for (const w of words) {
-    const t = cur ? cur + " " + w : w;
-    if (ctx.measureText(t).width > maxWidth && cur) {
-      lines.push(cur);
-      cur = w;
-    } else {
-      cur = t;
-    }
+    if (cur && ctx.measureText(cur + w).width > maxW) { lines.push(cur.trim()); cur = w; }
+    else cur += w;
   }
-  if (cur) lines.push(cur);
-  return lines.length ? lines : [text];
+  if (cur.trim()) lines.push(cur.trim());
+  return lines.length ? lines : [String(text)];
 }
 
 /**
@@ -491,7 +374,7 @@ function wrapText(ctx, text, maxWidth) {
 export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
-    shadeColor = "#000000", shadeThick = 4,
+    shadeColor = "#000000", shadeThick = 4, subPos = "bottom",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
   // Preload font for canvas
   try {
@@ -660,7 +543,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
             ctx.fillText(watermarkText, 12, height - 36);
           }
           if (s.text && subOn) {
-            drawStyledSubtitle(ctx, s.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
+            drawStyledSubtitle(ctx, s.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick, anchor: subtitleAnchor(width, height, blurRegions, flip, subPos) });
           }
           if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
           if (el < freezeTime) {
