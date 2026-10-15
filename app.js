@@ -1,6 +1,6 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015d";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015d";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015e";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015e";
 import { canvasExport, canvasRecapSync, canvasDubSync, fixWebMDuration } from "./js/canvas-export.js?v=20261015f";
 import {
   getKeys, saveKeys, clearKeys,
@@ -1227,9 +1227,10 @@ $("startRecap").addEventListener("click", async () => {
       log("rc", "⚠️ အသံကြာချိန် ဖတ်မရလို့ တစ်ပိုင်းတည်း ပို့ပါမယ်", "err");
     }
     const chunkDur = audioDur > 0 ? audioDur / nChunks : 0;
+    const allSegs = [];
+    if (!useSrtDirect) {
     log("rc", `အသံ ${nChunks} ပိုင်း ခွဲပြီး transcribe လုပ်ပါမယ်`);
     await ff.writeFile("taudio.mp3", await fetchFile(audioBlob));
-    const allSegs = [];
     for (let i = 0; i < nChunks; i++) {
       const start = chunkDur * i;
       const dur = chunkDur > 0 ? Math.min(chunkDur, audioDur - start) : 0;
