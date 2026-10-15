@@ -908,6 +908,24 @@ function rcInitLogoDrag() {
     update();
   });
   lel.addEventListener("pointerup", () => { sx = undefined; });
+  // Resize handle for logo
+  const lrh = document.createElement("div");
+  lrh.style.cssText = "position:absolute;right:-8px;bottom:-8px;width:20px;height:20px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;";
+  lel.appendChild(lrh);
+  let lrsx, lrsy, lrsz;
+  lrh.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    lrsx = e.clientX; lrsy = e.clientY; lrsz = rcLogoPos.size;
+    lrh.setPointerCapture(e.pointerId);
+  });
+  lrh.addEventListener("pointermove", (e) => {
+    if (lrsx === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    const dx = (e.clientX - lrsx) / rect.width;
+    rcLogoPos.size = Math.max(0.05, Math.min(0.5, lrsz + dx));
+    update();
+  });
+  lrh.addEventListener("pointerup", () => { lrsx = undefined; });
   wrap.appendChild(lel);
   // Update on shape change
   $("rcLogoShape")?.addEventListener("change", update);
@@ -1316,7 +1334,7 @@ $("startRecap").addEventListener("click", async () => {
       log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
       setStep("script", "done");
     }
-    if (watchMode === "fullvideo") {
+    if (!segments && watchMode === "fullvideo") {
       // Full video via Gemini Files API — AI watches the entire video
       try {
         setProgress("rc", 52, "Video တင်နေပါတယ် (Gemini)…");
@@ -1507,6 +1525,7 @@ $("startRecap").addEventListener("click", async () => {
         flip: wantFlip,
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,
+        ...getStyleOpts(),
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
