@@ -292,6 +292,11 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4,
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
+  // Preload font for canvas
+  try {
+    await document.fonts.load(`bold ${subSize}px "${subFont}"`);
+    await document.fonts.ready;
+  } catch (_) {}
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -482,6 +487,11 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4,
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
+  // Preload font for canvas
+  try {
+    await document.fonts.load(`bold ${subSize}px "${subFont}"`);
+    await document.fonts.ready;
+  } catch (_) {}
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
