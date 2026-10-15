@@ -1334,7 +1334,7 @@ $("startRecap").addEventListener("click", async () => {
       log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
       setStep("script", "done");
     }
-    if (watchMode === "fullvideo") {
+    if (!segments && watchMode === "fullvideo") {
       // Full video via Gemini Files API — AI watches the entire video
       try {
         setProgress("rc", 52, "Video တင်နေပါတယ် (Gemini)…");
@@ -1525,6 +1525,7 @@ $("startRecap").addEventListener("click", async () => {
         flip: wantFlip,
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,
+        ...getStyleOpts(),
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
