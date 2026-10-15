@@ -242,7 +242,7 @@ export async function extractSceneFrames(file, maxFrames, onprog) {
       v.onerror = () => rej(new Error("video ဖတ်မရပါ"));
     });
     const dur = v.duration || 0;
-    const n = Math.max(4, Math.min(maxFrames || 24, Math.floor(dur / 45)));
+    const n = Math.max(6, Math.min(maxFrames || 24, Math.floor(dur / 10)));
     if (!dur || dur < 5 || n < 4) return [];
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
