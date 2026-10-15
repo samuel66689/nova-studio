@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
-import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015d";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015b";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015b";
+import { canvasExport, canvasRecapSync, fixWebMDuration } from "./js/canvas-export.js?v=20261015e";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -865,11 +865,18 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
         return { start: s.start, end: s.end, text: s.text, audioBlob };
       });
-      const { blob: finalBlob, ext } = await canvasRecapSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
+      // Fix WebM duration metadata (for CapCut/editors)
+      if (ext === "webm" && recDur > 0) {
+        try {
+          log("rc", "🔧 Duration metadata ပြင်နေပါတယ်…");
+          finalBlob = await fixWebMDuration(finalBlob, recDur);
+        } catch (e) { console.warn("duration fix failed", e); }
+      }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
@@ -1276,13 +1283,19 @@ $("startRecap").addEventListener("click", async () => {
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
         return { start: s.start, end: s.end, text: s.text, audioBlob };
       });
-      const { blob: finalBlob, ext } = await canvasRecapSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip,
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
+      if (ext === "webm" && recDur > 0) {
+        try {
+          log("rc", "🔧 Duration metadata ပြင်နေပါတယ်…");
+          finalBlob = await fixWebMDuration(finalBlob, recDur);
+        } catch (e) { console.warn("duration fix failed", e); }
+      }
       // SRT + script files
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
