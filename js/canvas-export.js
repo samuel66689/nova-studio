@@ -114,6 +114,7 @@ export async function canvasExport(videoBlob, opts = {}) {
       ctx.fillStyle = "rgba(255,255,255,0.75)";
       ctx.fillText(watermarkText, 12, height - 36);
     }
+    try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, video.currentTime); } catch (_) {}
 
     // Subtitles
     const sub = subtitles.find((s) => t >= s.start && t < s.end);
@@ -167,6 +168,24 @@ export async function canvasExport(videoBlob, opts = {}) {
   return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext };
 }
 
+/** Draw blur boxes: copies region, blurs it. */
+function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions, t) {
+  for (const r of regions) {
+    if (t < (r.t0 || 0) || t > (r.t1 || 9999)) continue;
+    const bx = r.x * width, by = r.y * height;
+    const bw = r.w * width, bh = r.h * height;
+    ctx.save();
+    ctx.filter = `blur(${Math.max(2, Math.min(30, r.strength || 15))}px)`;
+    // Clip to box and draw video portion blurred
+    ctx.beginPath();
+    ctx.rect(bx, by, bw, bh);
+    ctx.clip();
+    if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, dx, dy, dw, dh);
+    ctx.restore();
+  }
+}
+
 function wrapText(ctx, text, maxWidth) {
   const words = String(text).split(/\s+/);
   const lines = [];
@@ -192,7 +211,7 @@ function wrapText(ctx, text, maxWidth) {
  * @param {Object} opts - {flip, watermarkText, width, height, onprog}
  */
 export async function canvasRecapSync(videoBlob, segments, opts = {}) {
-  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null } = opts;
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [] } = opts;
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -267,6 +286,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
       ctx.fillStyle = "rgba(255,255,255,0.75)";
       ctx.fillText(watermarkText, 12, height - 36);
     }
+    try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, video.currentTime); } catch (_) {}
     if (subtitleText) {
       ctx.font = "bold 28px sans-serif";
       ctx.textAlign = "center";
