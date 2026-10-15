@@ -1227,8 +1227,7 @@ $("startRecap").addEventListener("click", async () => {
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
       // SRT + script files
-      const srt = segments.map((s, i) =>
-        `${i + 1}\n${toSRTTime(s.start)} --> ${toSRTTime(s.end)}\n${s.text}\n`).join("\n");
+      const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
