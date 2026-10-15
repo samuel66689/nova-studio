@@ -913,6 +913,12 @@ $("rcFile").addEventListener("change", async (e) => {
   try {
     const saved = await idbGet("rc-last");
     if (saved && saved.segments && saved.segPieces && (Date.now() - saved.savedAt) < 24 * 3600 * 1000) {
+      // Auto-restore rcLastRun so Sync button works immediately
+      rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+      const sbAuto = $("rcSyncOnly");
+      if (sbAuto) sbAuto.style.display = "";
+      if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
+      if (saved.script) { try { $("rcScript").value = saved.script; } catch (_) {} }
       const bar = document.createElement("div");
       bar.style.cssText = "background:#1a3a2a;border:1px solid #4caf50;border-radius:8px;padding:12px;margin:8px 0;";
       bar.innerHTML = `<div>💾 <b>သိမ်းထားတာ ရှိတယ်</b> (${saved.segments.length} segments, ${new Date(saved.savedAt).toLocaleString()})</div>
