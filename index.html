@@ -184,6 +184,18 @@
     <input type="file" id="rcFile" accept="video/*">
     <div class="fileinfo" id="rcFileInfo"></div>
 
+    <div id="rcBlurSection" style="display:none;">
+      <label>Blur box (preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</label>
+      <div id="rcBlurWrap" style="position:relative;display:inline-block;max-width:100%;">
+        <video id="rcBlurPrev" controls playsinline style="max-width:100%;max-height:300px;display:block;"></video>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
+        <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+      </div>
+      <div id="rcBlurList"></div>
+    </div>
+
     <div class="row">
       <div>
         <label>Transcribe ဘာသာစကား</label>
