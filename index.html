@@ -245,7 +245,9 @@ button.ghost:active { border-color: var(--acc); }
   width: auto;
 }
 .tab-btn .tico { font-size: 23px; line-height: 1; }
-.tab-btn.active { color: #fff; background: rgba(139,92,246,.14); }
+.tab-btn { opacity: .55; transition: all .25s; }
+.tab-btn.active { opacity: 1; color: #fff; background: rgba(139,92,246,.18);
+  box-shadow: 0 0 18px rgba(139,92,246,.45); }
 .tab-btn.fab {
   flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
   background: var(--grad); color: #fff; margin-top: -34px;
@@ -254,7 +256,9 @@ button.ghost:active { border-color: var(--acc); }
   font-size: 11.5px; gap: 2px; padding: 8px 4px;
 }
 .tab-btn.fab .tico { font-size: 27px; }
-.tab-btn.fab.active { filter: brightness(1.12); color: #fff; background: var(--grad); }
+.tab-btn.fab { opacity: .55; }
+.tab-btn.fab.active { opacity: 1; filter: brightness(1.12); color: #fff; background: var(--grad);
+  box-shadow: 0 0 24px rgba(236,72,153,.6); }
 .tab-btn:active { transform: scale(.94); }
 
 /* ============ PROGRESS ============ */
@@ -673,9 +677,9 @@ button.ghost:active { border-color: var(--acc); }
 
 <!-- ============ BOTTOM NAV ============ -->
 <nav class="bottomnav">
-  <button class="tab-btn active" data-tab="cut"><span class="tico">✂️</span><span>Nova Cut</span></button>
+  <button class="tab-btn" data-tab="recap"><span class="tico">🎙️</span><span>Recap Nova</span></button>
   <button class="tab-btn" data-tab="editor" style="display:none;"><span class="tico">🎬</span><span>Video Editor</span></button>
-  <button class="tab-btn fab" data-tab="recap"><span class="tico">🎙️</span><span>Recap Nova</span></button>
+  <button class="tab-btn fab active" data-tab="cut"><span class="tico">✂️</span><span>Nova Cut</span></button>
 </nav>
 
 <script>
