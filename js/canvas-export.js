@@ -16,7 +16,12 @@ export async function canvasExport(videoBlob, opts = {}) {
     height = 1280,
     onprog = null,
     audioBlob = null, // optional narration audio to mux
+    blurRegions = [],
+    subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
+    shadeColor = "#000000", shadeThick = 4,
+    logoImg = null, logoPos = null, logoShape = "square",
   } = opts;
+  const dur = 0; // canvasExport doesn't track duration; set after metadata load if needed
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -154,7 +159,8 @@ export async function canvasExport(videoBlob, opts = {}) {
   if (audioEl) URL.revokeObjectURL(audioEl.src);
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur };
+  const dur = video.duration || 0;
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
 }
 
 /** Draw blur boxes: copies region, blurs it. */
