@@ -2,10 +2,8 @@
 <html lang="my">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Nova Studio — ဗီဒီယိုကိရိယာများ</title>
-<meta name="description" content="ဗီဒီယိုဖြတ်တောက်၊ ပြင်ဆင်ပြီး recap ဖန်တီးရန် Nova Studio။">
-<meta name="theme-color" content="#f4f6fb">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Sam's Studio — Browser Video Tools</title>
 <!-- COOP/COEP headers via service worker (ffmpeg.wasm multi-thread အတွက်) -->
 <script src="coi-serviceworker.js"></script>
 <script type="importmap">
@@ -23,146 +21,392 @@
 @font-face { font-family: "MyanmarFont"; src: url("fonts/MyanmarFont-Regular.ttf"); }
 @font-face { font-family: "MyanmarFont2"; src: url("fonts/MyanmarFont2.ttf"); }
 @font-face { font-family: "NotoSansMyanmar"; src: url("fonts/NotoSansMyanmar.ttf"); }
-  :root { --bg:#14101d; --card:#1e1830; --line:#352b52; --acc:#a855f7; --acc2:#ec4899;
-          --txt:#f1ecff; --dim:#a89fc7; --ok:#34d399; --err:#f87171; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--txt);
-         font-family:"Noto Sans Myanmar","Myanmar Text",system-ui,sans-serif;
-         max-width:760px; margin:0 auto; padding:12px; }
-  header { text-align:center; padding:14px 6px 6px; }
-  header h1 { margin:0; font-size:26px;
-    background:linear-gradient(90deg,var(--acc),var(--acc2));
-    -webkit-background-clip:text; background-clip:text; color:transparent; }
-  header p { color:var(--dim); font-size:13px; margin:6px 0 0; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
-          padding:14px; margin:12px 0; }
-  .card h2 { margin:0 0 10px; font-size:17px; }
-  label { display:block; font-size:13px; color:var(--dim); margin:10px 0 4px; }
-  input[type=text], input[type=password], input[type=number], input[type=file], select, textarea {
-    width:100%; padding:11px; border-radius:10px; border:1px solid var(--line);
-    background:#100c1a; color:var(--txt); font-size:15px; font-family:inherit; }
-  textarea { min-height:110px; resize:vertical; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .row > * { flex:1 1 auto; }
-  button { background:linear-gradient(90deg,var(--acc),var(--acc2)); color:#fff; border:0;
-           border-radius:12px; padding:13px 18px; font-size:16px; font-weight:700;
-           font-family:inherit; cursor:pointer; margin-top:10px; min-height:48px; }
-  button:disabled { opacity:.45; cursor:wait; }
-  button.ghost { background:#2a2140; border:1px solid var(--line); }
-  .tabs { display:flex; gap:8px; margin:12px 0; position:sticky; top:0; z-index:5;
-          background:var(--bg); padding:8px 0; }
-  .tab-btn { flex:1; margin-top:0; font-size:15px; padding:12px 4px; background:#241c3a; }
-  .tab-btn.active { background:linear-gradient(90deg,var(--acc),var(--acc2)); }
-  .tabpage { display:none; } .tabpage.active { display:block; }
-  .pbar { height:10px; background:#100c1a; border-radius:6px; margin-top:10px; overflow:hidden; }
-  .pfill { height:100%; width:0%; border-radius:6px;
-           background:linear-gradient(90deg,var(--acc),var(--acc2)); transition:width .2s; }
-  .plabel { font-size:13px; color:var(--dim); margin-top:4px; min-height:18px; }
-  .log { background:#0d0a15; border:1px solid var(--line); border-radius:10px;
-         padding:10px; margin-top:10px; font-size:12.5px; line-height:1.7;
-         max-height:220px; overflow-y:auto; white-space:pre-wrap; }
-  .log .ok { color:var(--ok); } .log .err { color:var(--err); }
-  .log .t { color:#6b5f8f; }
-  .results { margin-top:10px; display:flex; flex-direction:column; gap:8px; }
-  .part { display:flex; align-items:center; justify-content:space-between; gap:8px;
-          background:#100c1a; border:1px solid var(--line); border-radius:10px; padding:8px 10px; }
-  .part span { font-size:13px; }
-  .part a, .dl { background:#2a2140; color:#fff; text-decoration:none; padding:9px 14px;
-                 border-radius:10px; font-size:14px; font-weight:700; white-space:nowrap; }
-  .steps { list-style:none; padding:0; margin:10px 0 0; }
-  .steps li { padding:8px 10px; border:1px solid var(--line); border-radius:10px;
-              margin-bottom:6px; font-size:14px; background:#100c1a; }
-  .steps li.run { border-color:var(--acc); } .steps li.done { border-color:var(--ok); }
-  .steps li.fail { border-color:var(--err); }
-  .hint { font-size:12.5px; color:var(--dim); margin-top:8px; line-height:1.7; }
-  .chk { display:flex; align-items:center; gap:8px; margin-top:10px; font-size:15px; }
-  .chk input { width:20px; height:20px; }
-  .fileinfo { font-size:13px; color:var(--dim); margin-top:6px; }
-  /* blur boxes */
-  #blurWrap { position:relative; width:100%; background:#000; border:1px solid var(--line);
-              border-radius:10px; overflow:hidden; aspect-ratio:16/9; margin-top:6px; }
-  #blurPrev { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; background:#000; }
-  .bregion { position:absolute; border:2px solid var(--acc2); background:rgba(236,72,153,.22);
-             cursor:move; touch-action:none; box-sizing:border-box; }
-  .bhandle { position:absolute; right:-9px; bottom:-9px; width:22px; height:22px;
-             border-radius:50%; background:var(--acc2); cursor:nwse-resize; }
-  .bctl { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  .bctl label { margin:0; font-size:12px; }
-  .bctl input { width:64px; padding:7px; font-size:13px; flex:0 0 auto; margin:0; }
-  #blurList .part { margin-top:6px; }
+
+/* ============ TOKENS ============ */
+:root {
+  --bg: #0a0a13;
+  --bg2: #101019;
+  --surface: #16161f;
+  --surface2: #1c1c28;
+  --card: rgba(28, 28, 42, 0.72);
+  --line: #2c2c42;
+  --line-soft: #23232f;
+  --acc: #8b5cf6;
+  --acc2: #ec4899;
+  --grad: linear-gradient(135deg, #8b5cf6, #ec4899);
+  --grad-soft: linear-gradient(135deg, rgba(139,92,246,.16), rgba(236,72,153,.16));
+  --txt: #f4f2ff;
+  --dim: #a09ab8;
+  --dim2: #6e688a;
+  --ok: #34d399;
+  --err: #f87171;
+  --warn: #fbbf24;
+  --r: 18px;
+  --shadow: 0 8px 32px rgba(0,0,0,.45);
+  --nav-h: 76px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background:
+    radial-gradient(600px 300px at 15% -5%, rgba(139,92,246,.14), transparent 60%),
+    radial-gradient(600px 300px at 85% 0%, rgba(236,72,153,.10), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--txt);
+  font-family: "Noto Sans Myanmar", "Myanmar Text", system-ui, sans-serif;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 14px calc(var(--nav-h) + 28px);
+  min-height: 100vh;
+}
+
+/* ============ APP BAR ============ */
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 2px 12px;
+  background: rgba(10,10,19,.78);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--line-soft);
+  margin: 0 -14px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; }
+.brand .bolt {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center; font-size: 21px;
+  background: var(--grad); box-shadow: 0 4px 18px rgba(139,92,246,.45);
+}
+.brand .name {
+  background: linear-gradient(90deg, #c4b5fd, #f9a8d4);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  letter-spacing: .2px;
+}
+.icon-btn {
+  width: 44px; height: 44px; border-radius: 14px;
+  display: grid; place-items: center; font-size: 21px; cursor: pointer;
+  background: var(--surface2); border: 1px solid var(--line);
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  user-select: none;
+}
+.icon-btn:active { transform: scale(.92); }
+#settingsToggle:checked ~ .appbar .icon-btn,
+.icon-btn.on { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(139,92,246,.25); }
+.tagline {
+  text-align: center; color: var(--dim); font-size: 12.5px;
+  margin: 12px 4px 2px; line-height: 1.7;
+}
+
+/* ============ SETTINGS DRAWER (API keys) ============ */
+.settings-drawer {
+  overflow: hidden; max-height: 0; opacity: 0;
+  transition: max-height .38s ease, opacity .3s ease, margin .3s ease;
+  margin: 0;
+}
+#settingsToggle:checked ~ .settings-drawer { max-height: 560px; opacity: 1; margin: 12px 0 4px; }
+.settings-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 16px; box-shadow: var(--shadow);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.settings-card h2 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+
+/* ============ CARDS / SECTIONS ============ */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 18px 16px;
+  margin: 14px 0;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: fadeUp .35s ease both;
+}
+.card h2 { margin: 0 0 12px; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+.card.hero {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--surface), var(--surface)) padding-box,
+    linear-gradient(135deg, rgba(139,92,246,.65), rgba(236,72,153,.65)) border-box;
+  position: relative;
+}
+.card.hero::after {
+  content: "⭐ အဓိက feature";
+  position: absolute; top: -11px; right: 14px;
+  font-size: 11px; font-weight: 700; color: #fff;
+  background: var(--grad); padding: 3px 12px; border-radius: 999px;
+  box-shadow: 0 4px 14px rgba(236,72,153,.4);
+}
+.sect {
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 14px 12px;
+  margin: 14px 0;
+  background: rgba(255,255,255,.015);
+}
+.sect > label:first-child, .sect-title {
+  display: block; font-size: 14px; font-weight: 700; color: var(--txt);
+  margin: 0 0 8px;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tabpage { display: none; }
+.tabpage.active { display: block; animation: fadeUp .3s ease both; }
+
+/* ============ FORM ============ */
+label { display: block; font-size: 13px; color: var(--dim); margin: 12px 0 6px; font-weight: 600; }
+input[type=text], input[type=password], input[type=number], input[type=file], select, textarea {
+  width: 100%; padding: 12px 13px; border-radius: 13px;
+  border: 1px solid var(--line); background: #0e0e17; color: var(--txt);
+  font-size: 15px; font-family: inherit; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px rgba(139,92,246,.22);
+}
+select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23a09ab8' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+  padding-right: 36px;
+}
+input[type=file] { padding: 10px; font-size: 14px; }
+input[type=file]::file-selector-button {
+  background: var(--surface2); color: var(--txt); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 14px; font-family: inherit; font-size: 14px;
+  margin-right: 10px; cursor: pointer;
+}
+textarea { min-height: 110px; resize: vertical; line-height: 1.7; font-size: 13.5px; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.row > * { min-width: 0; }
+
+/* toggle switch checkboxes */
+.chk { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 14.5px; cursor: pointer; }
+.chk input {
+  appearance: none; -webkit-appearance: none;
+  width: 46px; height: 27px; border-radius: 999px; flex: 0 0 auto;
+  background: #2b2b3d; border: 1px solid var(--line); position: relative;
+  cursor: pointer; transition: background .2s, border-color .2s; margin: 0;
+}
+.chk input::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 21px; height: 21px; border-radius: 50%;
+  background: #8f89a8; transition: transform .2s, background .2s;
+}
+.chk input:checked { background: var(--grad); border-color: transparent; }
+.chk input:checked::after { transform: translateX(19px); background: #fff; }
+.chk span { line-height: 1.6; }
+
+/* ============ BUTTONS ============ */
+button {
+  background: var(--grad); color: #fff; border: 0; border-radius: 14px;
+  padding: 14px 18px; font-size: 16px; font-weight: 800; font-family: inherit;
+  cursor: pointer; margin-top: 12px; min-height: 52px; width: 100%;
+  box-shadow: 0 6px 22px rgba(139,92,246,.35);
+  transition: transform .12s, box-shadow .2s, filter .2s;
+  touch-action: manipulation;
+}
+button:active { transform: scale(.97); filter: brightness(1.08); }
+button:disabled { opacity: .45; cursor: wait; box-shadow: none; }
+button.ghost {
+  background: var(--surface2); border: 1px solid var(--line);
+  box-shadow: none; font-weight: 700;
+}
+button.ghost:active { border-color: var(--acc); }
+.btn-row { display: flex; gap: 10px; }
+.btn-row button { margin-top: 12px; }
+
+/* ============ BOTTOM NAV ============ */
+.bottomnav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  display: flex; align-items: flex-end; justify-content: space-around;
+  padding: 10px 18px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(12,12,20,.86);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--line-soft);
+}
+.tab-btn {
+  flex: 1; max-width: 220px; margin: 0; padding: 10px 6px; min-height: 0;
+  background: transparent; border: 0; box-shadow: none; border-radius: 14px;
+  color: var(--dim); font-size: 12.5px; font-weight: 700;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: auto;
+}
+.tab-btn .tico { font-size: 23px; line-height: 1; }
+.tab-btn.active { color: #fff; background: rgba(139,92,246,.14); }
+.tab-btn.fab {
+  flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
+  background: var(--grad); color: #fff; margin-top: -34px;
+  box-shadow: 0 10px 28px rgba(236,72,153,.5);
+  border: 4px solid var(--bg);
+  font-size: 11.5px; gap: 2px; padding: 8px 4px;
+}
+.tab-btn.fab .tico { font-size: 27px; }
+.tab-btn.fab.active { filter: brightness(1.12); color: #fff; background: var(--grad); }
+.tab-btn:active { transform: scale(.94); }
+
+/* ============ PROGRESS ============ */
+.pbar {
+  height: 10px; background: #0d0d16; border: 1px solid var(--line-soft);
+  border-radius: 999px; margin-top: 14px; overflow: hidden; position: relative;
+}
+.pfill {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: var(--grad); transition: width .25s ease; position: relative; overflow: hidden;
+}
+.pfill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%);
+  animation: shimmer 1.4s infinite; transform: translateX(-100%);
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+.plabel { font-size: 13px; color: var(--dim); margin-top: 6px; min-height: 20px; }
+
+/* ============ LOG ============ */
+.log {
+  background: #08080f; border: 1px solid var(--line-soft); border-radius: 13px;
+  padding: 12px; margin-top: 12px; font-size: 12.5px; line-height: 1.8;
+  max-height: 230px; overflow-y: auto; white-space: pre-wrap;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+}
+.log:empty { display: none; }
+.log .ok { color: var(--ok); }
+.log .err { color: var(--err); }
+.log .t { color: var(--dim2); }
+
+/* ============ RESULTS ============ */
+.results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.results:empty { display: none; }
+.part {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--surface2); border: 1px solid var(--line);
+  border-radius: 13px; padding: 10px 12px; animation: fadeUp .25s ease both;
+}
+.part span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.part a, .dl {
+  background: var(--grad-soft); border: 1px solid var(--acc); color: #fff;
+  text-decoration: none; padding: 9px 16px; border-radius: 11px;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+}
+
+/* ============ STEPS TIMELINE ============ */
+.steps { list-style: none; padding: 0; margin: 14px 0 0; counter-reset: step; }
+.steps li {
+  position: relative; padding: 11px 12px 11px 46px;
+  border: 1px solid var(--line-soft); border-radius: 13px;
+  margin-bottom: 8px; font-size: 13.5px; background: var(--surface2);
+  line-height: 1.6; transition: border-color .25s, background .25s;
+}
+.steps li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12.5px; font-weight: 800;
+  background: #2b2b3d; color: var(--dim); transition: all .25s;
+}
+.steps li.run { border-color: var(--acc); background: rgba(139,92,246,.08); }
+.steps li.run::before { background: var(--grad); color: #fff; animation: pulse 1.2s infinite; }
+.steps li.done { border-color: rgba(52,211,153,.5); }
+.steps li.done::before { content: "✓"; background: var(--ok); color: #06281c; }
+.steps li.fail { border-color: var(--err); }
+.steps li.fail::before { content: "!"; background: var(--err); color: #fff; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(139,92,246,.18); } }
+
+/* ============ MISC ============ */
+.hint { font-size: 12.5px; color: var(--dim); margin-top: 10px; line-height: 1.8; }
+.hint.warn { color: var(--warn); }
+.fileinfo { font-size: 13px; color: var(--dim); margin-top: 8px; }
+.fileinfo:empty { display: none; }
+
+/* blur boxes — editor */
+#blurWrap {
+  position: relative; width: 100%; background: #000;
+  border: 1px solid var(--line); border-radius: 14px;
+  overflow: hidden; aspect-ratio: 16/9; margin-top: 8px;
+}
+#blurPrev { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; background: #000; }
+.bregion {
+  position: absolute; border: 2px solid var(--acc2);
+  background: rgba(236,72,153,.22); cursor: move; touch-action: none; box-sizing: border-box;
+  border-radius: 6px;
+}
+.bhandle {
+  position: absolute; right: -9px; bottom: -9px; width: 22px; height: 22px;
+  border-radius: 50%; background: var(--acc2); cursor: nwse-resize;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
+}
+.bctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px;
+        background: var(--surface2); border: 1px solid var(--line-soft);
+        border-radius: 12px; padding: 10px; }
+.bctl label { margin: 0; font-size: 12px; }
+.bctl input { width: 66px; padding: 8px; font-size: 13px; flex: 0 0 auto; margin: 0; }
+.btitle { font-size: 13px; font-weight: 700; }
+#blurList .part { margin-top: 8px; }
+
+/* recap blur preview */
+#rcBlurPrev { border-radius: 14px; border: 1px solid var(--line); background: #000; }
+#rcLogoPrev { border-radius: 12px; border: 1px solid var(--line); }
+
+/* error box injected by inline script */
+#js-errbox { border-top: 2px solid var(--err); }
+
+@media (min-width: 560px) {
+  .row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+}
 </style>
-<link rel="stylesheet" href="ui.css?v=20261016d">
 </head>
 <body>
 
-<header class="site-header">
-  <div class="brand-lockup">
-    <span class="brand-mark" aria-hidden="true">⚡</span>
-    <div class="brand-copy">
-      <p class="brand-kicker">ဗီဒီယိုအလုပ်ခွင်</p>
-      <h1>Nova Studio</h1>
-    </div>
+<input type="checkbox" id="settingsToggle" hidden>
+<!-- ======= APP BAR ======= -->
+<header class="appbar">
+  <div class="brand">
+    <span class="bolt">⚡</span>
+    <span class="name">Sam's Studio</span>
   </div>
-  <p class="hero-copy">ဗီဒီယိုဖြတ်တောက်ခြင်း၊ ပြင်ဆင်ခြင်းနဲ့ recap ဖန်တီးခြင်းတွေကို တစ်နေရာတည်းမှာ လွယ်ကူစွာလုပ်ပါ။</p>
-  <div class="privacy-note">ဗီဒီယိုဖိုင်ကို ဒီ browser ထဲမှာပဲ လုပ်ဆောင်ပါတယ်</div>
+  <label class="icon-btn" for="settingsToggle" title="API Keys">⚙️</label>
 </header>
+<p class="tagline">Video tools တွေ browser ထဲမှာပဲ လုပ်မယ် — server မလို, upload မလို</p>
 
-<main id="main-content">
-<section class="card api-card" id="api-settings" aria-labelledby="api-title">
-  <div class="section-heading">
-    <span class="heading-icon" aria-hidden="true">🔑</span>
-    <div class="heading-copy">
-      <p class="eyebrow">စတင်အသုံးပြုရန်</p>
-      <h2 id="api-title">API ချိတ်ဆက်မှု</h2>
-      <p class="section-description">AI လုပ်ဆောင်ချက်တွေသုံးဖို့ key ထည့်ပြီး သိမ်းပါ။</p>
+<!-- ======= SETTINGS DRAWER (API KEYS) ======= -->
+<div class="settings-drawer">
+  <div class="settings-card">
+    <h2>⚙️ API Keys</h2>
+    <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — console.groq.com)</span></label>
+    <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off">
+    <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — aistudio.google.com)</span></label>
+    <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off">
+    <div class="btn-row">
+      <button id="saveKeys">💾 သိမ်းမယ်</button>
+      <button id="clearKeys" class="ghost">🗑 ဖျက်မယ်</button>
     </div>
-    <div class="hint" id="keyStatus" data-state="needed" role="status" aria-live="polite">⚠️ Key မထည့်ရသေးပါ</div>
+    <div class="hint warn" id="keyStatus">⚠️ Key မထည့်ရသေးပါ</div>
+    <div class="hint">Keys တွေက ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — ဘယ် server မှာမှ မတင်ဘူး။</div>
   </div>
-  <div class="key-grid">
-    <div class="key-field">
-      <label class="key-label" for="groqKey"><span>Groq API Key</span><span class="key-purpose">အသံကို စာသားပြောင်းရန်</span></label>
-      <div class="key-control">
-        <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off" spellcheck="false" aria-describedby="groqHelp">
-        <button type="button" class="key-toggle" data-toggle-key="groqKey" aria-label="Groq key ကိုပြရန်" aria-pressed="false">ပြရန်</button>
-      </div>
-      <p class="field-help" id="groqHelp">Groq console မှ key ကိုကူးထည့်ပါ။</p>
-    </div>
-    <div class="key-field">
-      <label class="key-label" for="geminiKey"><span>Gemini API Key</span><span class="key-purpose">Recap ဇာတ်ညွှန်းရေးရန်</span></label>
-      <div class="key-control">
-        <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off" spellcheck="false" aria-describedby="geminiHelp">
-        <button type="button" class="key-toggle" data-toggle-key="geminiKey" aria-label="Gemini key ကိုပြရန်" aria-pressed="false">ပြရန်</button>
-      </div>
-      <p class="field-help" id="geminiHelp">Google AI Studio မှ key ကိုကူးထည့်ပါ။</p>
-    </div>
-  </div>
-  <div class="key-footer">
-    <p class="hint">🔒 Key များကို ဒီ browser ရဲ့ localStorage မှာပဲ သိမ်းပါတယ်။ Server ပေါ်မတင်ပါ။</p>
-    <div class="key-actions">
-      <span class="key-feedback" id="keyFeedback" role="status" aria-live="polite"></span>
-      <button id="saveKeys">Key သိမ်းရန်</button>
-      <button id="clearKeys" class="ghost">ရှင်းလင်းရန်</button>
-    </div>
-  </div>
-</section>
+</div>
 
-<nav class="tabs" role="tablist" aria-label="ဗီဒီယိုလုပ်ဆောင်ချက်များ">
-  <button class="tab-btn active" id="tab-btn-cut" type="button" role="tab" aria-selected="true" aria-controls="tab-cut" data-tab="cut">✂️ Nova Cut</button>
-  <button class="tab-btn" id="tab-btn-editor" type="button" role="tab" aria-selected="false" aria-controls="tab-editor" data-tab="editor" style="display:none;">🎬 Video Editor</button>
-  <button class="tab-btn" id="tab-btn-recap" type="button" role="tab" aria-selected="false" aria-controls="tab-recap" data-tab="recap">🎙️ Recap Nova</button>
-</nav>
-
+<main>
 <!-- ============ NOVA CUT ============ -->
-<section class="tabpage active" id="tab-cut" role="tabpanel" aria-labelledby="tab-btn-cut" aria-hidden="false">
+<section class="tabpage active" id="tab-cut">
   <div class="card">
-    <div class="tool-heading">
-      <span class="heading-icon" aria-hidden="true">✂️</span>
-      <div><h2>Nova Cut</h2><p>ဗီဒီယိုကို အပိုင်းတိုများအဖြစ် အရည်အသွေးမလျှော့ဘဲ ဖြတ်ပါ။</p></div>
-    </div>
-    <label for="cutFile">ဖြတ်မယ့် ဗီဒီယိုဖိုင်</label>
+    <h2>✂️ Nova Cut — Video အပိုင်းလိုက် ဖြတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
     <input type="file" id="cutFile" accept="video/*">
     <div class="fileinfo" id="cutFileInfo"></div>
-    <label for="cutMinutes">အပိုင်းတစ်ခုစီရဲ့ ကြာချိန် (မိနစ်)</label>
+    <label>တစ်ပိုင်းကို မိနစ် (ပုံမှန် ၈)</label>
     <input type="number" id="cutMinutes" value="8" min="1" max="120" step="1">
     <button id="startCut">✂️ ဖြတ်မယ်</button>
     <div class="pbar"><div class="pfill" id="cutProgress"></div></div>
@@ -175,13 +419,10 @@
 </section>
 
 <!-- ============ VIDEO EDITOR ============ -->
-<section class="tabpage" id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor" aria-hidden="true">
+<section class="tabpage" id="tab-editor">
   <div class="card">
-    <div class="tool-heading">
-      <span class="heading-icon" aria-hidden="true">🎬</span>
-      <div><h2>Video Editor</h2><p>Crop, subtitle, watermark နဲ့ blur ကို ပြင်ဆင်ပါ။</p></div>
-    </div>
-    <label for="edFile">ပြင်ဆင်မယ့် ဗီဒီယိုဖိုင်</label>
+    <h2>🎬 Video Editor</h2>
+    <label>Video file ရွေးပါ</label>
     <input type="file" id="edFile" accept="video/*">
     <div class="fileinfo" id="edFileInfo"></div>
 
@@ -202,15 +443,17 @@
     <label>စာတန်းထိုး .srt file (burn-in — မထည့်ချင်ရင် ချန်ထား)</label>
     <input type="file" id="srtFile" accept=".srt">
 
-    <label>🟫 Blur Box များ <span style="color:var(--dim)">(မျက်နှာ/logo ဖျက်ရန် — preview ပေါ်မှာ ဆွဲရွှေ့လို့ရ)</span></label>
-    <div id="blurWrap">
-      <video id="blurPrev" controls muted playsinline></video>
+    <div class="sect">
+      <span class="sect-title">🟫 Blur Box များ <span style="color:var(--dim);font-weight:400;font-size:12px;">(မျက်နှာ/logo ဖျက်ရန် — preview ပေါ်မှာ ဆွဲရွှေ့လို့ရ)</span></span>
+      <div id="blurWrap">
+        <video id="blurPrev" controls muted playsinline></video>
+      </div>
+      <div class="hint">Preview မှာ ပုံ ဆန့်နေသလို မြင်ရနိုင်တယ် — box တွေရဲ့ နေရာက final video ပေါ်မှာ အတိအကျ ကိုက်ညီမယ်။</div>
+      <button id="addBlur" class="ghost">➕ Blur box ထည့်</button>
+      <div id="blurList"></div>
     </div>
-    <div class="hint">Preview မှာ ပုံ ဆန့်နေသလို မြင်ရနိုင်တယ် — box တွေရဲ့ နေရာက final video ပေါ်မှာ အတိအကျ ကိုက်ညီမယ်။</div>
-    <button id="addBlur" class="ghost">➕ Blur box ထည့်</button>
-    <div id="blurList"></div>
 
-    <div class="row">
+    <div class="btn-row">
       <button id="startEdit">🎬 လုပ်မယ်</button>
       <button id="canvasExportBtn" class="ghost">📹 Canvas နဲ့ ထုတ် (memory safe)</button>
       <button id="extractAudio" class="ghost">🎵 အသံထုတ်မယ် (MP3)</button>
@@ -224,41 +467,35 @@
 </section>
 
 <!-- ============ RECAP NOVA ============ -->
-<section class="tabpage" id="tab-recap" role="tabpanel" aria-labelledby="tab-btn-recap" aria-hidden="true">
-  <div class="card">
-    <div class="tool-heading">
-      <span class="heading-icon" aria-hidden="true">🎙️</span>
-      <div><h2>Recap Nova</h2><p>ဗီဒီယိုမှ ဇာတ်ညွှန်းနဲ့ အသံဖန်တီးပြီး recap ထုတ်ပါ။</p></div>
-    </div>
-    <ol class="workflow-guide" aria-label="Recap ပြုလုပ်ပုံ">
-      <li><span class="workflow-number">၁</span><span>ဗီဒီယိုရွေးပါ</span></li>
-      <li><span class="workflow-number">၂</span><span>အသံနဲ့ပုံစံရွေးပါ</span></li>
-      <li><span class="workflow-number">၃</span><span>ဖန်တီးပြီး ရယူပါ</span></li>
-    </ol>
-    <label for="rcFile">Recap လုပ်မယ့် ဗီဒီယိုဖိုင်</label>
+<section class="tabpage" id="tab-recap">
+  <div class="card hero">
+    <h2>🎙️ Recap Nova — Video ကနေ recap video ထုတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
     <input type="file" id="rcFile" accept="video/*">
     <div class="fileinfo" id="rcFileInfo"></div>
     <div>
-      <label for="rcSrtFile">စာတန်းထိုးဖိုင် (.srt) — ရွေးချယ်နိုင်သည်</label>
+      <label>SRT file (optional — sub-translator က ထုတ်ထားတာ)</label>
       <input type="file" id="rcSrtFile" accept=".srt">
       <div class="fileinfo" id="rcSrtInfo"></div>
     </div>
 
     <div id="rcBlurSection" style="display:none;">
-      <label>Blur box (preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</label>
-      <div id="rcBlurWrap" style="position:relative;display:inline-block;max-width:100%;">
-        <video id="rcBlurPrev" controls playsinline style="max-width:100%;max-height:300px;display:block;"></video>
+      <div class="sect">
+        <span class="sect-title">🟫 Blur box <span style="color:var(--dim);font-weight:400;font-size:12px;">(preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</span></span>
+        <div id="rcBlurWrap" style="position:relative;display:inline-block;max-width:100%;">
+          <video id="rcBlurPrev" controls playsinline style="max-width:100%;max-height:300px;display:block;"></video>
+        </div>
+        <div class="btn-row" style="margin-top:8px;">
+          <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
+          <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+        </div>
+        <div id="rcBlurList"></div>
       </div>
-      <div class="row" style="margin-top:8px;">
-        <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
-        <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
-      </div>
-      <div id="rcBlurList"></div>
     </div>
 
     <div class="row">
       <div>
-      <label for="rcLang">အသံမှစာသားပြောင်းမယ့် ဘာသာစကား</label>
+        <label>Transcribe ဘာသာစကား</label>
         <select id="rcLang">
           <option value="auto">Auto</option>
           <option value="zh">中文 (Chinese)</option>
@@ -267,7 +504,7 @@
         </select>
       </div>
       <div>
-          <label for="rcVoice">ဖတ်ပြမယ့် အသံ</label>
+        <label>အသံ (TTS voice)</label>
         <div style="display:flex;gap:8px;align-items:stretch;">
           <select id="rcVoice" style="flex:1;min-width:0;">
           <option value="my-MM-NilarNeural">👩 Nilar (မိန်းကလေး) — Edge</option>
@@ -284,7 +521,7 @@
 
     <div class="row">
       <div>
-        <label for="rcStyle">ဇာတ်ညွှန်းပုံစံ</label>
+        <label>Narration style</label>
         <select id="rcStyle">
           <option value="story">📖 Story — ဇာတ်လမ်းရှင်း</option>
           <option value="viral">🔥 Viral — hook ဆန်ဆန်</option>
@@ -292,7 +529,7 @@
         </select>
       </div>
       <div>
-        <label for="rcWatchMode">ဗီဒီယိုကို AI စစ်ဆေးပုံ</label>
+        <label>AI ကြည့်ပုံ</label>
         <select id="rcWatchMode">
           <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
           <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
@@ -302,23 +539,20 @@
 
     <div class="row">
       <div>
-        <label>အလိုအလျောက် ဗီဒီယိုပြင်ဆင်မှု</label>
+        <label>🔄 Video edit (auto)</label>
         <div class="chk"><input type="checkbox" id="rcFlip"><span>ဘယ်ညာလှန် (flip)</span></div>
-        <div class="chk"><input type="checkbox" id="rcAudioFirst" checked><span>အသံနဲ့ဗီဒီယို ကြာချိန်ကို ကိုက်ညှိမယ်</span></div>
+        <div class="chk"><input type="checkbox" id="rcAudioFirst" checked><span>🎯 Audio-first sync (canvas) — အသံနဲ့ရုပ် ကိုက်</span></div>
       </div>
       <div>
-        <label for="rcWatermark">ဗီဒီယိုပေါ်တင်မယ့် အမှတ်အသားစာသား</label>
+        <label>Watermark စာသား</label>
         <input type="text" id="rcWatermark" placeholder="sam recap" value="sam recap" style="width:100%;">
       </div>
     </div>
 
-    <details class="advanced-settings">
-      <summary>စာတန်း၊ အမှတ်တံဆိပ်နှင့် အခြားပုံစံများ</summary>
-      <div class="advanced-content">
     <!-- Subtitle style -->
-    <div class="option-panel">
-      <label>စာလုံးထိုးပုံစံ</label>
-      <div class="chk"><input type="checkbox" id="rcSubOn" checked><span>ဗီဒီယိုပေါ်မှာ စာတန်းပြမယ်</span></div>
+    <div class="sect">
+      <span class="sect-title">📝 Subtitle style</span>
+      <div class="chk" style="margin-top:4px;"><input type="checkbox" id="rcSubOn" checked><span>Subtitle ပြ (on/off)</span></div>
       <div class="row">
         <div>
           <label>အရောင်</label>
@@ -333,7 +567,7 @@
           </select>
         </div>
         <div>
-          <label for="rcSubSize">စာလုံးအရွယ်အစား</label>
+          <label>Font size</label>
           <select id="rcSubSize">
             <option value="20">20</option>
             <option value="24">24</option>
@@ -344,7 +578,7 @@
           </select>
         </div>
         <div>
-          <label for="rcSubFont">စာလုံးပုံစံ</label>
+          <label>Font</label>
           <select id="rcSubFont">
             <option value="Aka07" selected>Aka07 (Bold)</option>
             <option value="Aka011">Aka011</option>
@@ -378,22 +612,22 @@
           </select>
         </div>
         <div>
-          <label for="rcSubPos">စာတန်းနေရာ</label>
+          <label>စာနေရာ</label>
           <select id="rcSubPos">
             <option value="onBlur" selected>Blur box ပေါ်</option>
-            <option value="bottom">အောက်ခြေ</option>
+            <option value="bottom">အောက်</option>
           </select>
         </div>
       </div>
       <div>
-        <label for="rcSubPreviewText">စာတန်းနမူနာ စမ်းကြည့်ရန်</label>
+        <label>စမ်းကြည့် (စာရိုက် → preview ပေါ်မှာ ပေါ်)</label>
         <input type="text" id="rcSubPreviewText" placeholder="စမ်းသပ်စာသား ရိုက်ပါ" style="width:100%;">
       </div>
     </div>
 
     <!-- Logo -->
-    <div class="option-panel">
-      <label>အမှတ်တံဆိပ် (Logo)</label>
+    <div class="sect">
+      <span class="sect-title">🖼️ Logo</span>
       <div class="row">
         <div>
           <input type="file" id="rcLogoFile" accept="image/*">
@@ -411,11 +645,9 @@
         <img id="rcLogoPrev" style="max-width:100%;display:block;">
       </div>
     </div>
-      </div>
-    </details>
 
-    <button id="startRecap">Recap ဖန်တီးရန်</button>
-    <button id="rcSyncOnly" class="ghost" style="display:none;">ဗီဒီယိုနဲ့အသံ ပြန်ညှိရန်</button>
+    <button id="startRecap">🎙️ Recap စမယ်</button>
+    <button id="rcSyncOnly" class="ghost" style="display:none;">🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)</button>
     <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
     <div class="plabel" id="rcProgressLabel"></div>
 
@@ -427,9 +659,9 @@
       <li data-step="mux">5️⃣ Video နဲ့ တွဲမယ် + SRT ထုတ်မယ်</li>
     </ol>
 
-    <label for="rcTranscript">အသိအမှတ်ပြုထားတဲ့ စာသား</label>
+    <label>Transcript (စစ်ကြည့်ရန်)</label>
     <textarea id="rcTranscript" readonly placeholder="transcribe ပြီးရင် ဒီမှာ ပေါ်မယ်…"></textarea>
-    <label for="rcScript">Recap အသံဖတ်မယ့် ဇာတ်ညွှန်း</label>
+    <label>Recap script (segments)</label>
     <textarea id="rcScript" readonly placeholder="script ရရင် ဒီမှာ ပေါ်မယ်…"></textarea>
 
     <div class="results" id="rcResults"></div>
@@ -437,7 +669,14 @@
     <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က ဘယ် server မှမတက်ဘူး။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
   </div>
 </section>
- </main>
+</main>
+
+<!-- ============ BOTTOM NAV ============ -->
+<nav class="bottomnav">
+  <button class="tab-btn active" data-tab="cut"><span class="tico">✂️</span><span>Nova Cut</span></button>
+  <button class="tab-btn" data-tab="editor" style="display:none;"><span class="tico">🎬</span><span>Video Editor</span></button>
+  <button class="tab-btn fab" data-tab="recap"><span class="tico">🎙️</span><span>Recap Nova</span></button>
+</nav>
 
 <script>
 window.__errs = [];
@@ -455,6 +694,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261016f"></script>
+<script type="module" src="app-v3.js?v=20261016e"></script>
 </body>
 </html>
