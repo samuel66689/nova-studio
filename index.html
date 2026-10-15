@@ -15,6 +15,12 @@
 }
 </script>
 <style>
+@font-face { font-family: "Aka07"; src: url("fonts/Aka07-Bold.ttf"); }
+@font-face { font-family: "Aka011"; src: url("fonts/Aka011-Regular.ttf"); }
+@font-face { font-family: "AJKunheing"; src: url("fonts/AJKunheingETM06-Regular.ttf"); }
+@font-face { font-family: "MyanmarFont"; src: url("fonts/MyanmarFont-Regular.ttf"); }
+@font-face { font-family: "MyanmarFont2"; src: url("fonts/MyanmarFont2.ttf"); }
+@font-face { font-family: "NotoSansMyanmar"; src: url("fonts/NotoSansMyanmar.ttf"); }
   :root { --bg:#14101d; --card:#1e1830; --line:#352b52; --acc:#a855f7; --acc2:#ec4899;
           --txt:#f1ecff; --dim:#a89fc7; --ok:#34d399; --err:#f87171; }
   * { box-sizing:border-box; }
@@ -107,7 +113,7 @@
 
 <nav class="tabs">
   <button class="tab-btn active" data-tab="cut">✂️ Nova Cut</button>
-  <button class="tab-btn" data-tab="editor">🎬 Video Editor</button>
+  <button class="tab-btn" data-tab="editor" style="display:none;">🎬 Video Editor</button>
   <button class="tab-btn" data-tab="recap">🎙️ Recap Nova</button>
 </nav>
 
@@ -183,6 +189,11 @@
     <label>Video file ရွေးပါ</label>
     <input type="file" id="rcFile" accept="video/*">
     <div class="fileinfo" id="rcFileInfo"></div>
+    <div>
+      <label>SRT file (optional — sub-translator က ထုတ်ထားတာ)</label>
+      <input type="file" id="rcSrtFile" accept=".srt">
+      <div class="fileinfo" id="rcSrtInfo"></div>
+    </div>
 
     <div id="rcBlurSection" style="display:none;">
       <label>Blur box (preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</label>
@@ -252,6 +263,96 @@
       </div>
     </div>
 
+    <!-- Subtitle style -->
+    <div style="border:1px solid #444;border-radius:8px;padding:12px;margin:12px 0;">
+      <label>📝 Subtitle style</label>
+      <div class="chk"><input type="checkbox" id="rcSubOn" checked><span>Subtitle ပြ (on/off)</span></div>
+      <div class="row">
+        <div>
+          <label>အရောင်</label>
+          <select id="rcSubColor">
+            <option value="#ffffff" selected>⚪ အဖြူ</option>
+            <option value="#000000">⚫ အနက်</option>
+            <option value="#ff0000">🔴 အနီ</option>
+            <option value="#0000ff">🔵 အပြာ</option>
+            <option value="#ff69b4">🌸 ပန်း</option>
+            <option value="#00ff00">🟢 အစိမ်း</option>
+            <option value="#ffff00">🟡 အဝါ</option>
+          </select>
+        </div>
+        <div>
+          <label>Font size</label>
+          <select id="rcSubSize">
+            <option value="20">20</option>
+            <option value="24">24</option>
+            <option value="28" selected>28</option>
+            <option value="32">32</option>
+            <option value="36">36</option>
+            <option value="40">40</option>
+          </select>
+        </div>
+        <div>
+          <label>Font</label>
+          <select id="rcSubFont">
+            <option value="Aka07" selected>Aka07 (Bold)</option>
+            <option value="Aka011">Aka011</option>
+            <option value="AJKunheing">AJKunheing</option>
+            <option value="MyanmarFont">MyanmarFont</option>
+            <option value="MyanmarFont2">MyanmarFont2</option>
+            <option value="NotoSansMyanmar">Noto Sans Myanmar</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Shade အရောင်</label>
+          <select id="rcShadeColor">
+            <option value="#000000" selected>⚫ အနက်</option>
+            <option value="#ffffff">⚪ အဖြူ</option>
+            <option value="#ff0000">🔴 အနီ</option>
+            <option value="#0000ff">🔵 အပြာ</option>
+            <option value="#ff69b4">🌸 ပန်း</option>
+            <option value="#00ff00">🟢 အစိမ်း</option>
+            <option value="#ffff00">🟡 အဝါ</option>
+          </select>
+        </div>
+        <div>
+          <label>Shade အထူ</label>
+          <select id="rcShadeThick">
+            <option value="2">ပါး (2)</option>
+            <option value="4" selected>လတ် (4)</option>
+            <option value="6">ထူ (6)</option>
+            <option value="8">အထူ (8)</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label>စမ်းကြည့် (စာရိုက် → preview ပေါ်မှာ ပေါ်)</label>
+        <input type="text" id="rcSubPreviewText" placeholder="စမ်းသပ်စာသား ရိုက်ပါ" style="width:100%;">
+      </div>
+    </div>
+
+    <!-- Logo -->
+    <div style="border:1px solid #444;border-radius:8px;padding:12px;margin:12px 0;">
+      <label>🖼️ Logo</label>
+      <div class="row">
+        <div>
+          <input type="file" id="rcLogoFile" accept="image/*">
+        </div>
+        <div>
+          <label>ပုံစံ</label>
+          <select id="rcLogoShape">
+            <option value="square" selected>◻️ လေးထောင့် (မူရင်း)</option>
+            <option value="circle">⭕ အဝိုင်း (crop)</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint">Logo တင်ပြီးရင် preview ပေါ်မှာ ဆွဲရွှေ့နိုင်တယ်</div>
+      <div id="rcLogoWrap" style="position:relative;display:none;max-width:200px;">
+        <img id="rcLogoPrev" style="max-width:100%;display:block;">
+      </div>
+    </div>
+
     <button id="startRecap">🎙️ Recap စမယ်</button>
     <button id="rcSyncOnly" class="ghost" style="display:none;">🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)</button>
     <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
@@ -292,6 +393,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app.js?v=20261015c"></script>
+<script type="module" src="app.js?v=20261015d"></script>
 </body>
 </html>
