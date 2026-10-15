@@ -176,84 +176,111 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
 }
 
 /**
- * Fix WebM duration metadata (MediaRecorder writes wrong duration).
- * Patches the Duration element in the Segment Info.
+ * Add or correct WebM Duration metadata. MediaRecorder commonly omits this
+ * field; editors may then mistake a long recording for only its final chunk.
  */
 export async function fixWebMDuration(blob, durationSec) {
-  const buf = await blob.arrayBuffer();
-  const arr = new Uint8Array(buf);
-  const view = new DataView(buf);
+  if (!Number.isFinite(durationSec) || durationSec <= 0) return blob;
+  const arr = new Uint8Array(await blob.arrayBuffer());
 
-  // EBML varint parser
-  function readVint(pos) {
-    const b = arr[pos];
-    let len = 1;
-    let mask = 0x80;
-    while (len <= 8 && !(b & mask)) { mask >>= 1; len++; }
-    if (len > 8) return null;
-    let val = b & (mask - 1);
-    for (let i = 1; i < len; i++) val = (val << 8) | arr[pos + i];
-    return { len, val };
+  function vintLength(firstByte) {
+    let mask = 0x80, len = 1;
+    while (len <= 8 && !(firstByte & mask)) { mask >>= 1; len++; }
+    return len <= 8 ? len : 0;
   }
-
-  // Find Segment (ID: 0x18538067)
-  // Skip EBML header (ID: 0x1A45DFA3)
-  let pos = 0;
-  while (pos < arr.length - 4) {
-    const id = readVint(pos);
-    if (!id) break;
-    if (id.val === 0x1A45DFA3) { // EBML header
-      const sz = readVint(pos + id.len);
-      pos += id.len + sz.len + sz.val;
-    } else if (id.val === 0x18538067) { // Segment
-      const sz = readVint(pos + id.len);
-      const segStart = pos + id.len + sz.len;
-      // Find Info (ID: 0x1549A966) within Segment
-      let p2 = segStart;
-      const segEnd = sz.val === 0xFFFFFFFFFFFFFF ? arr.length : segStart + sz.val;
-      while (p2 < segEnd - 4) {
-        const id2 = readVint(p2);
-        if (!id2) break;
-        if (id2.val === 0x1549A966) { // Info
-          const sz2 = readVint(p2 + id2.len);
-          const infoStart = p2 + id2.len + sz2.len;
-          const infoEnd = infoStart + sz2.val;
-          // Find Duration (ID: 0x4489) within Info
-          let p3 = infoStart;
-          while (p3 < infoEnd - 4) {
-            const id3 = readVint(p3);
-            if (!id3) break;
-            if (id3.val === 0x4489) { // Duration
-              const sz3 = readVint(p3 + id3.len);
-              const durPos = p3 + id3.len + sz3.len;
-              if (sz3.val === 8) {
-                view.setFloat64(durPos, durationSec, false); // big-endian
-                return new Blob([buf], { type: "video/webm" });
-              } else if (sz3.val === 4) {
-                view.setFloat32(durPos, durationSec, false);
-                return new Blob([buf], { type: "video/webm" });
-              }
-              break;
-            }
-            const s3 = readVint(p3 + id3.len);
-            if (!s3) break;
-            p3 += id3.len + s3.len + s3.val;
-          }
-          break;
-        }
-        const s2 = readVint(p2 + id2.len);
-        if (!s2) break;
-        p2 += id2.len + s2.len + s2.val;
+  function readElement(pos, isId = false) {
+    if (pos >= arr.length) return null;
+    const idLen = vintLength(arr[pos]);
+    if (!idLen || pos + idLen >= arr.length) return null;
+    let id = 0n;
+    for (let i = 0; i < idLen; i++) id = (id << 8n) | BigInt(arr[pos + i]);
+    const sizePos = pos + idLen;
+    const sizeLen = vintLength(arr[sizePos]);
+    if (!sizeLen || sizePos + sizeLen > arr.length) return null;
+    let size = BigInt(arr[sizePos] & (0xff >> sizeLen));
+    for (let i = 1; i < sizeLen; i++) size = (size << 8n) | BigInt(arr[sizePos + i]);
+    const unknown = !isId && size === (1n << BigInt(7 * sizeLen)) - 1n;
+    return { id, idLen, sizeLen, size, unknown, dataStart: sizePos + sizeLen,
+      end: unknown ? arr.length : sizePos + sizeLen + Number(size) };
+  }
+  function encodeSize(size) {
+    for (let len = 1; len <= 8; len++) {
+      if (size < (1n << BigInt(7 * len)) - 1n) {
+        let n = size;
+        const out = new Uint8Array(len);
+        for (let i = len - 1; i >= 0; i--) { out[i] = Number(n & 0xffn); n >>= 8n; }
+        out[0] |= 1 << (8 - len);
+        return out;
       }
-      break;
-    } else {
-      const sz = readVint(pos + id.len);
-      if (!sz) break;
-      pos += id.len + sz.len + sz.val;
     }
+    throw new Error("WebM အရွယ်အစားကြီးလွန်းပါတယ်");
   }
-  // If not found, return original
-  return blob;
+  function join(parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return out;
+  }
+
+  let segment = null;
+  for (let pos = 0; pos < arr.length - 4;) {
+    const el = readElement(pos);
+    if (!el) break;
+    if (el.id === 0x18538067n) { segment = el; break; }
+    if (el.unknown || el.end <= pos) break;
+    pos = el.end;
+  }
+  if (!segment) return blob;
+
+  let info = null;
+  for (let pos = segment.dataStart; pos < segment.end - 4;) {
+    const el = readElement(pos);
+    if (!el) break;
+    if (el.id === 0x1549A966n) { info = el; break; }
+    if (el.unknown || el.end <= pos) break;
+    pos = el.end;
+  }
+  if (!info || info.unknown || info.end > arr.length) return blob;
+
+  let scaleNs = 1_000_000; // Matroska default: one millisecond per timestamp tick.
+  let durationPos = -1, durationSize = 0;
+  for (let pos = info.dataStart; pos < info.end;) {
+    const el = readElement(pos);
+    if (!el || el.unknown || el.end > info.end || el.end <= pos) break;
+    if (el.id === 0x2ad7b1n && el.size > 0n && el.size <= 8n) {
+      scaleNs = 0;
+      for (let i = el.dataStart; i < el.end; i++) scaleNs = scaleNs * 256 + arr[i];
+    } else if (el.id === 0x4489n) {
+      durationPos = el.dataStart;
+      durationSize = Number(el.size);
+    }
+    pos = el.end;
+  }
+  const durationTicks = durationSec * 1e9 / scaleNs;
+  const durationValue = new Uint8Array(8);
+  new DataView(durationValue.buffer).setFloat64(0, durationTicks, false);
+
+  let newInfo;
+  if (durationPos >= 0) {
+    if (durationSize === 8) arr.set(durationValue, durationPos);
+    else if (durationSize === 4) new DataView(arr.buffer).setFloat32(durationPos, durationTicks, false);
+    else return blob;
+    newInfo = arr.slice(info.dataStart - info.sizeLen - info.idLen, info.end);
+  } else {
+    const payload = join([arr.slice(info.dataStart, info.end), new Uint8Array([0x44, 0x89, 0x88]), durationValue]);
+    const header = join([arr.slice(info.dataStart - info.sizeLen - info.idLen, info.dataStart - info.sizeLen), encodeSize(BigInt(payload.length))]);
+    newInfo = join([header, payload]);
+  }
+
+  const oldInfoLength = info.end - (info.dataStart - info.sizeLen - info.idLen);
+  const delta = newInfo.length - oldInfoLength;
+  const segmentIdStart = segment.dataStart - segment.sizeLen - segment.idLen;
+  const segmentId = arr.slice(segmentIdStart, segmentIdStart + segment.idLen);
+  const segmentSizeBytes = segment.unknown ? arr.slice(segmentIdStart + segment.idLen, segment.dataStart) : encodeSize(segment.size + BigInt(delta));
+  const payload = join([arr.slice(segment.dataStart, info.dataStart - info.sizeLen - info.idLen), newInfo,
+    arr.slice(info.end, segment.end)]);
+  const fixed = join([arr.slice(0, segmentIdStart), segmentId, segmentSizeBytes, payload]);
+  return new Blob([fixed], { type: "video/webm" });
 }
 
 /**
