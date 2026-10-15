@@ -165,7 +165,7 @@ export async function canvasExport(videoBlob, opts = {}) {
   if (audioEl) URL.revokeObjectURL(audioEl.src);
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext };
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur };
 }
 
 /** Draw blur boxes: copies region, blurs it. */
@@ -184,6 +184,87 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
     ctx.drawImage(video, dx, dy, dw, dh);
     ctx.restore();
   }
+}
+
+/**
+ * Fix WebM duration metadata (MediaRecorder writes wrong duration).
+ * Patches the Duration element in the Segment Info.
+ */
+export async function fixWebMDuration(blob, durationSec) {
+  const buf = await blob.arrayBuffer();
+  const arr = new Uint8Array(buf);
+  const view = new DataView(buf);
+
+  // EBML varint parser
+  function readVint(pos) {
+    const b = arr[pos];
+    let len = 1;
+    let mask = 0x80;
+    while (len <= 8 && !(b & mask)) { mask >>= 1; len++; }
+    if (len > 8) return null;
+    let val = b & (mask - 1);
+    for (let i = 1; i < len; i++) val = (val << 8) | arr[pos + i];
+    return { len, val };
+  }
+
+  // Find Segment (ID: 0x18538067)
+  // Skip EBML header (ID: 0x1A45DFA3)
+  let pos = 0;
+  while (pos < arr.length - 4) {
+    const id = readVint(pos);
+    if (!id) break;
+    if (id.val === 0x1A45DFA3) { // EBML header
+      const sz = readVint(pos + id.len);
+      pos += id.len + sz.len + sz.val;
+    } else if (id.val === 0x18538067) { // Segment
+      const sz = readVint(pos + id.len);
+      const segStart = pos + id.len + sz.len;
+      // Find Info (ID: 0x1549A966) within Segment
+      let p2 = segStart;
+      const segEnd = sz.val === 0xFFFFFFFFFFFFFF ? arr.length : segStart + sz.val;
+      while (p2 < segEnd - 4) {
+        const id2 = readVint(p2);
+        if (!id2) break;
+        if (id2.val === 0x1549A966) { // Info
+          const sz2 = readVint(p2 + id2.len);
+          const infoStart = p2 + id2.len + sz2.len;
+          const infoEnd = infoStart + sz2.val;
+          // Find Duration (ID: 0x4489) within Info
+          let p3 = infoStart;
+          while (p3 < infoEnd - 4) {
+            const id3 = readVint(p3);
+            if (!id3) break;
+            if (id3.val === 0x4489) { // Duration
+              const sz3 = readVint(p3 + id3.len);
+              const durPos = p3 + id3.len + sz3.len;
+              if (sz3.val === 8) {
+                view.setFloat64(durPos, durationSec, false); // big-endian
+                return new Blob([buf], { type: "video/webm" });
+              } else if (sz3.val === 4) {
+                view.setFloat32(durPos, durationSec, false);
+                return new Blob([buf], { type: "video/webm" });
+              }
+              break;
+            }
+            const s3 = readVint(p3 + id3.len);
+            if (!s3) break;
+            p3 += id3.len + s3.len + s3.val;
+          }
+          break;
+        }
+        const s2 = readVint(p2 + id2.len);
+        if (!s2) break;
+        p2 += id2.len + s2.len + s2.val;
+      }
+      break;
+    } else {
+      const sz = readVint(pos + id.len);
+      if (!sz) break;
+      pos += id.len + sz.len + sz.val;
+    }
+  }
+  // If not found, return original
+  return blob;
 }
 
 function wrapText(ctx, text, maxWidth) {
