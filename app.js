@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015b";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015b";
-import { canvasExport, canvasRecapSync, fixWebMDuration } from "./js/canvas-export.js?v=20261015e";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015c";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015c";
+import { canvasExport, canvasRecapSync, canvasDubSync, fixWebMDuration } from "./js/canvas-export.js?v=20261015f";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -856,7 +856,40 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   try {
     log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    if (useAudioFirst) {
+    const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
+    // Dubbing: video-first (output = video duration). Recap: audio-first.
+    if (isDubbing) {
+      setProgress("rc", 90, "🎙️ Dubbing sync (video-first)…");
+      log("rc", "🎙️ Video timing အတိုင်း dubbing လုပ်နေပါတယ်…");
+      const wantFlip = $("rcFlip") && $("rcFlip").checked;
+      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+      const segsWithAudio = segments.map((s, i) => {
+        const pieces = segPieces[s._i] || segPieces[i] || [];
+        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+        return { start: s.start, end: s.end, text: s.text, audioBlob };
+      });
+      let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
+        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        width: 720, height: 1280,
+        onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+      });
+      if (ext === "webm" && recDur > 0) {
+        try { finalBlob = await fixWebMDuration(finalBlob, recDur); } catch (e) {}
+      }
+      const srt = segmentsToSRT(segments);
+      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+      $("rcResults").innerHTML = "";
+      const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
+      $("rcResults").appendChild(r1.row);
+      const r2 = dlRow(baseName + "_dubbed.srt", srtBlob);
+      $("rcResults").appendChild(r2.row);
+      const r3 = dlRow(baseName + "_script.txt", txtBlob);
+      $("rcResults").appendChild(r3.row);
+      setProgress("rc", 100, "ပြီးပါပြီ ✅");
+      log("rc", "Dubbing ပြီးပါပြီ ✅", "ok");
+      setStep("mux", "done");
+    } else if (useAudioFirst) {
       setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
       const wantFlip = $("rcFlip") && $("rcFlip").checked;
       const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
@@ -1270,7 +1303,40 @@ $("startRecap").addEventListener("click", async () => {
     // ---- step 5: sync + mux ----
     rcLastRun = { segments, segPieces, baseName };
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    if (useAudioFirst) {
+    const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
+    // Dubbing: video-first (output = video duration). Recap: audio-first.
+    if (isDubbing) {
+      setProgress("rc", 90, "🎙️ Dubbing sync (video-first)…");
+      log("rc", "🎙️ Video timing အတိုင်း dubbing လုပ်နေပါတယ်…");
+      const wantFlip = $("rcFlip") && $("rcFlip").checked;
+      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+      const segsWithAudio = segments.map((s, i) => {
+        const pieces = segPieces[s._i] || segPieces[i] || [];
+        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+        return { start: s.start, end: s.end, text: s.text, audioBlob };
+      });
+      let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
+        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        width: 720, height: 1280,
+        onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+      });
+      if (ext === "webm" && recDur > 0) {
+        try { finalBlob = await fixWebMDuration(finalBlob, recDur); } catch (e) {}
+      }
+      const srt = segmentsToSRT(segments);
+      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+      $("rcResults").innerHTML = "";
+      const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
+      $("rcResults").appendChild(r1.row);
+      const r2 = dlRow(baseName + "_dubbed.srt", srtBlob);
+      $("rcResults").appendChild(r2.row);
+      const r3 = dlRow(baseName + "_script.txt", txtBlob);
+      $("rcResults").appendChild(r3.row);
+      setProgress("rc", 100, "ပြီးပါပြီ ✅");
+      log("rc", "Dubbing ပြီးပါပြီ ✅", "ok");
+      setStep("mux", "done");
+    } else if (useAudioFirst) {
       // Canvas audio-first: video adjusts to narration per segment
       setStep("mux", "run");
       setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
