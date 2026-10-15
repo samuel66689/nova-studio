@@ -209,6 +209,24 @@
       </div>
     </div>
 
+    <div class="row">
+      <div>
+        <label>Narration style</label>
+        <select id="rcStyle">
+          <option value="story">📖 Story — ဇာတ်လမ်းရှင်း</option>
+          <option value="viral">🔥 Viral — hook ဆန်ဆန်</option>
+          <option value="hybrid">⚡ Hybrid — ရောစပ်</option>
+        </select>
+      </div>
+      <div>
+        <label>AI ကြည့်ပုံ</label>
+        <select id="rcWatchMode">
+          <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
+          <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
+        </select>
+      </div>
+    </div>
+
     <button id="startRecap">🎙️ Recap စမယ်</button>
     <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
     <div class="plabel" id="rcProgressLabel"></div>
