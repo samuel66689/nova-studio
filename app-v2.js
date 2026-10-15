@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, fixWebMDuration } from "./js/canvas-export.js?v=20261016b";
+import { canvasExport, canvasRecapSync, canvasDubSync } from "./js/canvas-export.js?v=20261016c";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -1040,7 +1040,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       if (ext === "webm" && recDur > 0) {
-        try { finalBlob = await fixWebMDuration(finalBlob, recDur); } catch (e) {}
+        try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
       }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
@@ -1510,7 +1510,7 @@ $("startRecap").addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       if (ext === "webm" && recDur > 0) {
-        try { finalBlob = await fixWebMDuration(finalBlob, recDur); } catch (e) {}
+        try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
       }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
