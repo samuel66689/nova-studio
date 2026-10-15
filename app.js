@@ -1214,6 +1214,7 @@ $("startRecap").addEventListener("click", async () => {
 
     // ---- step 2: transcribe (chunked if big) ----
     setStep("transcribe", "run");
+    const allSegs = [];
     if (!useSrtDirect) {
     log("rc", "2️⃣ စာသားပြောင်းနေပါတယ် (Groq Whisper)…");
     const CHUNK_MB = 15;
@@ -1227,8 +1228,6 @@ $("startRecap").addEventListener("click", async () => {
       log("rc", "⚠️ အသံကြာချိန် ဖတ်မရလို့ တစ်ပိုင်းတည်း ပို့ပါမယ်", "err");
     }
     const chunkDur = audioDur > 0 ? audioDur / nChunks : 0;
-    const allSegs = [];
-    if (!useSrtDirect) {
     log("rc", `အသံ ${nChunks} ပိုင်း ခွဲပြီး transcribe လုပ်ပါမယ်`);
     await ff.writeFile("taudio.mp3", await fetchFile(audioBlob));
     for (let i = 0; i < nChunks; i++) {
