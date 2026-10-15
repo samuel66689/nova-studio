@@ -182,7 +182,7 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
 
 /** Subtitle position: on first blur box, or bottom */
 function subtitleAnchor(W, H, blur, flip, mode) {
-  const b = blur && blur[0];
+  const b = (blur || []).slice().sort((a, c) => c.y - a.y)[0];
   if (mode === "onBlur" && b) {
     const x = flip ? 1 - b.x - b.w : b.x;
     return { cx: (x + b.w / 2) * W, cy: (b.y + b.h / 2) * H,
@@ -392,6 +392,26 @@ function wrapText(ctx, text, maxW) {
   return lines.length ? lines : [String(text)];
 }
 
+/** Split long narration into chunks for timed display */
+function chunkText(text, max = 45) {
+  const parts = String(text).split(/(?<=[။၊!?])\s*/).filter(Boolean);
+  const out = []; let cur = "";
+  for (const part of parts) {
+    if (cur && (cur + " " + part).length > max) { out.push(cur); cur = part; }
+    else cur = cur ? cur + " " + part : part;
+  }
+  if (cur) out.push(cur);
+  return out.length ? out : [String(text)];
+}
+function pickChunk(text, t, total) {
+  const ch = chunkText(text);
+  if (ch.length <= 1) return ch[0];
+  const sum = ch.reduce((a, c) => a + c.length, 0);
+  let acc = 0;
+  for (const c of ch) { acc += c.length; if (t / Math.max(total, 0.1) <= acc / sum) return c; }
+  return ch[ch.length - 1];
+}
+
 /**
  * Audio-first recap export: video adjusts to match narration audio per segment.
  * For each segment: play video clip; if shorter than audio, freeze last frame.
@@ -435,6 +455,13 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const dw = vw * scale, dh = vh * scale;
   const dx = (width - dw) / 2, dy = (height - dh) / 2;
 
+  // Unified scene state
+  const S = { video, dw, dh, flip, blur: blurRegions, wm: watermarkText,
+    t: 0, text: "",
+    sub: { on: subOn, color: subColor, size: subSize, font: subFont,
+           shadeColor, thickness: shadeThick, pos: subPos },
+    logo: { img: logoImg, pos: logoPos, shape: logoShape } };
+
   // Prepare audio elements with durations
   const segData = [];
   for (const s of segments) {
@@ -475,34 +502,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const recDone = new Promise((res) => { rec.onstop = res; });
 
-  const drawFrame = (subtitleText) => {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, width, height);
-    ctx.save();
-    if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
-    ctx.drawImage(video, dx, dy, dw, dh);
-    ctx.restore();
-    if (watermarkText) {
-      ctx.font = "22px sans-serif";
-      ctx.fillStyle = "rgba(255,255,255,0.75)";
-      ctx.fillText(watermarkText, 12, height - 36);
-    }
-    try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, video.currentTime); } catch (_) {}
-    if (subtitleText) {
-      ctx.font = "bold 28px sans-serif";
-      ctx.textAlign = "center";
-      ctx.strokeStyle = "rgba(0,0,0,0.9)";
-      ctx.lineWidth = 4;
-      const lines = wrapText(ctx, subtitleText, width - 40);
-      const y0 = height - 100 - (lines.length - 1) * 34;
-      lines.forEach((ln, i) => {
-        ctx.strokeText(ln, width / 2, y0 + i * 34);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(ln, width / 2, y0 + i * 34);
-      });
-      ctx.textAlign = "left";
-    }
-  };
+  // drawFrame replaced by drawScene (unified)
 
   rec.start(1000);
   let elapsed = 0;
@@ -536,7 +536,8 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     await new Promise((res) => {
       const check = () => {
         const el = (performance.now() - t0) / 1000;
-        drawFrame(s.text);
+        S.t = video.currentTime; S.text = pickChunk(s.text, el, d);
+        drawScene(ctx, width, height, S);
         if (el < playTime && !video.ended) {
           requestAnimationFrame(check);
         } else {
@@ -557,23 +558,8 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
           const el = (performance.now() - fz0) / 1000;
           const zp = Math.min(el / Math.max(freezeTime, 0.1), 1);
           const zs = 1 + 0.12 * zp;
-          ctx.fillStyle = "#000";
-          ctx.fillRect(0, 0, width, height);
-          ctx.save();
-          if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
-          const zdw = dw * zs, zdh = dh * zs;
-          const zdx = (width - zdw) / 2, zdy = (height - zdh) / 2;
-          ctx.drawImage(video, zdx, zdy, zdw, zdh);
-          ctx.restore();
-          if (watermarkText) {
-            ctx.font = "22px sans-serif";
-            ctx.fillStyle = "rgba(255,255,255,0.75)";
-            ctx.fillText(watermarkText, 12, height - 36);
-          }
-          if (s.text && subOn) {
-            drawStyledSubtitle(ctx, s.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick, anchor: subtitleAnchor(width, height, blurRegions, flip, subPos) });
-          }
-          if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
+          S.t = video.currentTime; S.text = pickChunk(s.text, playTime + el, d);
+          drawScene(ctx, width, height, S, zs);
           if (el < freezeTime) {
             requestAnimationFrame(check);
           } else {
