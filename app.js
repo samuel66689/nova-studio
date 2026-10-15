@@ -847,6 +847,52 @@ $("rcClearBlur")?.addEventListener("click", () => {
   rcRenderBlurList();
 });
 
+// Sync-only: uses saved rcLastRun, skips transcribe/script/TTS
+$("rcSyncOnly")?.addEventListener("click", async () => {
+  if (!rcLastRun || !rcLastRun.segPieces) { alert("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
+  if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  const { segments, segPieces, baseName } = rcLastRun;
+  setStep("mux", "run");
+  try {
+    log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
+    const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
+    if (useAudioFirst) {
+      setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
+      const wantFlip = $("rcFlip") && $("rcFlip").checked;
+      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+      const segsWithAudio = segments.map((s, i) => {
+        const pieces = segPieces[s._i] || segPieces[i] || [];
+        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+        return { start: s.start, end: s.end, text: s.text, audioBlob };
+      });
+      const { blob: finalBlob, ext } = await canvasRecapSync(rcFile, segsWithAudio, {
+        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        width: 720, height: 1280,
+        onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
+      });
+      const srt = segmentsToSRT(segments);
+      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+      $("rcResults").innerHTML = "";
+      const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
+      $("rcResults").appendChild(r1.row);
+      const r2 = dlRow(baseName + "_recap.srt", srtBlob);
+      $("rcResults").appendChild(r2.row);
+      const r3 = dlRow(baseName + "_script.txt", txtBlob);
+      $("rcResults").appendChild(r3.row);
+      setProgress("rc", 100, "ပြီးပါပြီ ✅");
+      log("rc", "Sync ပြီးပါပြီ ✅", "ok");
+      setStep("mux", "done");
+    } else {
+      const ff2 = await ensureFFmpeg((m, c) => log("rc", m, c));
+      await doRecapMux(ff2, segments, segPieces, baseName);
+    }
+  } catch (e) {
+    log("rc", "အမှား: " + (e.message || e), "err");
+    setStep("mux", "fail");
+  }
+});
+
 $("rcFile").addEventListener("change", async (e) => {
   rcFile = e.target.files[0] || null;
   $("rcResults").innerHTML = "";
@@ -886,6 +932,8 @@ $("rcFile").addEventListener("change", async (e) => {
         bar.remove();
         // Jump to step 5
         setStep("tts", "done");
+        const sb2 = $("rcSyncOnly");
+        if (sb2) sb2.style.display = "";
         log("rc", "📂 ပြန်လည်ရယူပြီးပြီ — video ရွေးပြီး '🔄 Sync ပြန်လုပ်' နှိပ်ပါ", "ok");
       };
       $("rcDiscardBtn").onclick = async () => {
@@ -1190,6 +1238,9 @@ $("startRecap").addEventListener("click", async () => {
     const totalPieces = segPieces.reduce((a, p) => a + p.length, 0);
     log("rc", `အသံအားလုံး ရပါပြီ (${segments.length} segments, ${totalPieces} ပိုင်း) ✅`, "ok");
     setStep("tts", "done");
+    // Show sync-only button
+    const syncBtn = $("rcSyncOnly");
+    if (syncBtn) syncBtn.style.display = "";
     // Persist to IndexedDB (survives refresh — no more wasted API calls)
     try {
       await idbSet("rc-last", {
