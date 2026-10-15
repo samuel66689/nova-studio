@@ -18,10 +18,9 @@ export async function canvasExport(videoBlob, opts = {}) {
     audioBlob = null, // optional narration audio to mux
     blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
-    shadeColor = "#000000", shadeThick = 4,
+    shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
     logoImg = null, logoPos = null, logoShape = "square",
   } = opts;
-  const dur = 0; // canvasExport doesn't track duration; set after metadata load if needed
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -159,7 +158,6 @@ export async function canvasExport(videoBlob, opts = {}) {
   if (audioEl) URL.revokeObjectURL(audioEl.src);
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  const dur = video.duration || 0;
   return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
 }
 
@@ -182,10 +180,40 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
   }
 }
 
+/** Subtitle position: on first blur box, or bottom */
+function subtitleAnchor(W, H, blur, flip, mode) {
+  const b = blur && blur[0];
+  if (mode === "onBlur" && b) {
+    const x = flip ? 1 - b.x - b.w : b.x;
+    return { cx: (x + b.w / 2) * W, cy: (b.y + b.h / 2) * H,
+             maxW: Math.max(b.w * W, W * 0.6) };
+  }
+  return { cx: W / 2, cy: H - 100, maxW: W - 40 };
+}
+
+/** Unified scene renderer: video -> blur -> subtitle -> logo */
+function drawScene(ctx, W, H, S, zoom = 1) {
+  const zw = S.dw * zoom, zh = S.dh * zoom;
+  const rx = (W - zw) / 2, ry = (H - zh) / 2;
+  ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (S.flip) { ctx.translate(W, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(S.video, rx, ry, zw, zh);
+  ctx.restore();
+  try { drawBlurBoxes(ctx, S.video, rx, ry, zw, zh, W, H, S.flip, S.blur, S.t); } catch (_) {}
+  if (S.sub.on && S.text)
+    drawStyledSubtitle(ctx, S.text, W, H, { ...S.sub,
+      anchor: subtitleAnchor(W, H, S.blur, S.flip, S.sub.pos) });
+  if (S.logo.img && S.logo.pos)
+    drawLogo(ctx, S.logo.img, W, H, S.logo.pos, S.logo.shape);
+  if (S.wm) { ctx.font = "22px sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,.75)"; ctx.fillText(S.wm, 12, H - 36); }
+}
+
 export async function canvasDubSync(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
-    shadeColor = "#000000", shadeThick = 4, subPos = "bottom",
+    shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
   // Preload font for canvas
   try {
@@ -374,7 +402,7 @@ function wrapText(ctx, text, maxW) {
 export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
-    shadeColor = "#000000", shadeThick = 4, subPos = "bottom",
+    shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
   // Preload font for canvas
   try {
