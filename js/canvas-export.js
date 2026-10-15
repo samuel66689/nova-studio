@@ -267,6 +267,146 @@ export async function fixWebMDuration(blob, durationSec) {
   return blob;
 }
 
+/**
+ * Video-first dubbing: video plays continuously, audio fits to original timing.
+ * Output duration = video duration. Audio sped up (max 1.3x) if too long.
+ */
+export async function canvasDubSync(videoBlob, segments, opts = {}) {
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [] } = opts;
+
+  const url = URL.createObjectURL(videoBlob);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+  document.body.appendChild(video);
+  video.src = url;
+  try { video.load(); } catch (_) {}
+  await new Promise((res, rej) => {
+    const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
+    video.onloadedmetadata = () => { clearTimeout(to); res(); };
+    video.onerror = () => { clearTimeout(to); rej(new Error("video ဖတ်မရပါ")); };
+  });
+
+  const dur = video.duration || 0;
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.max(width / vw, height / vh);
+  const dw = vw * scale, dh = vh * scale;
+  const dx = (width - dw) / 2, dy = (height - dh) / 2;
+
+  // Prepare audio with durations
+  const segData = [];
+  for (const s of segments) {
+    const aurl = URL.createObjectURL(s.audioBlob);
+    const a = new Audio(aurl);
+    const d = await new Promise((res) => {
+      a.onloadedmetadata = () => res(a.duration || 0);
+      a.onerror = () => res(0);
+    });
+    segData.push({ ...s, audioEl: a, audioDur: d, audioUrl: aurl });
+  }
+  segData.sort((a, b) => a.start - b.start);
+
+  // Audio mixing
+  const stream = canvas.captureStream(30);
+  const actx = new AudioContext();
+  const dest = actx.createMediaStreamDestination();
+  for (const s of segData) {
+    const src = actx.createMediaElementSource(s.audioEl);
+    src.connect(dest);
+  }
+  const atrack = dest.stream.getAudioTracks()[0];
+  if (atrack) stream.addTrack(atrack);
+
+  const mimeTypes = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  let mimeType = "";
+  for (const mt of mimeTypes) { if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; } }
+  if (!mimeType) throw new Error("MediaRecorder မရပါ");
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 });
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const recDone = new Promise((res) => { rec.onstop = res; });
+
+  const drawFrame = (t) => {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+    ctx.save();
+    if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, dx, dy, dw, dh);
+    ctx.restore();
+    if (watermarkText) {
+      ctx.font = "22px sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillText(watermarkText, 12, height - 36);
+    }
+    try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, t); } catch (_) {}
+    const sub = segData.find((s) => t >= s.start && t < s.end);
+    if (sub && sub.text) {
+      ctx.font = "bold 28px sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "rgba(0,0,0,0.9)";
+      ctx.lineWidth = 4;
+      const lines = wrapText(ctx, sub.text, width - 40);
+      const y0 = height - 100 - (lines.length - 1) * 34;
+      lines.forEach((ln, i) => {
+        ctx.strokeText(ln, width / 2, y0 + i * 34);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(ln, width / 2, y0 + i * 34);
+      });
+      ctx.textAlign = "left";
+    }
+    if (onprog) { try { onprog(t / dur); } catch (_) {} }
+  };
+
+  rec.start(1000);
+  await video.play();
+
+  // Play video continuously, trigger audio at timestamps
+  let segIdx = 0;
+  await new Promise((res) => {
+    const check = () => {
+      const t = video.currentTime;
+      drawFrame(t);
+      // Trigger audio for segments starting now
+      while (segIdx < segData.length && segData[segIdx].start <= t + 0.1) {
+        const s = segData[segIdx];
+        const segDur = Math.max(0.5, s.end - s.start);
+        // Speed up audio if too long (max 1.3x)
+        if (s.audioDur > segDur) {
+          const rate = Math.min(1.3, s.audioDur / segDur);
+          try { s.audioEl.playbackRate = rate; } catch (_) {}
+        }
+        try { s.audioEl.play(); } catch (_) {}
+        segIdx++;
+      }
+      if (!video.ended && t < dur) {
+        requestAnimationFrame(check);
+      } else {
+        res();
+      }
+    };
+    check();
+    // Safety timeout
+    setTimeout(res, (dur + 10) * 1000);
+  });
+
+  video.pause();
+  rec.stop();
+  await recDone;
+  URL.revokeObjectURL(url);
+  for (const s of segData) URL.revokeObjectURL(s.audioUrl);
+  try { video.remove(); } catch (_) {}
+  try { await actx.close(); } catch (_) {}
+
+  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
+}
+
 function wrapText(ctx, text, maxWidth) {
   const words = String(text).split(/\s+/);
   const lines = [];
