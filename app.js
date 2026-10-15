@@ -1,6 +1,6 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015c";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015c";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015d";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015d";
 import { canvasExport, canvasRecapSync, canvasDubSync, fixWebMDuration } from "./js/canvas-export.js?v=20261015f";
 import {
   getKeys, saveKeys, clearKeys,
@@ -840,12 +840,138 @@ function rcRenderBlurList() {
     list.appendChild(d);
   });
 }
+// ---- SRT upload ----
+let rcSrtSegments = null;
+$("rcSrtFile")?.addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) { rcSrtSegments = null; $("rcSrtInfo").textContent = ""; return; }
+  try {
+    const txt = await f.text();
+    rcSrtSegments = parseSRT(txt);
+    $("rcSrtInfo").textContent = `${f.name} — ${rcSrtSegments.length} ကြောင်း`;
+    log("rc", `SRT ရပါပြီ (${rcSrtSegments.length} ကြောင်း) ✅`, "ok");
+  } catch (err) {
+    $("rcSrtInfo").textContent = "SRT ဖတ်မရပါ";
+    rcSrtSegments = null;
+  }
+});
+
+// ---- Logo upload + drag ----
+let rcLogoImg = null;
+let rcLogoPos = { x: 0.05, y: 0.05, size: 0.15 }; // fractions
+$("rcLogoFile")?.addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const img = new Image();
+  img.onload = () => {
+    rcLogoImg = img;
+    $("rcLogoPrev").src = url;
+    $("rcLogoWrap").style.display = "";
+    // Make draggable on the main preview
+    rcInitLogoDrag();
+  };
+  img.src = url;
+});
+function rcInitLogoDrag() {
+  // Logo drag on blur preview video
+  const wrap = $("rcBlurWrap");
+  let lel = document.getElementById("rcLogoDrag");
+  if (lel) lel.remove();
+  if (!rcLogoImg) return;
+  lel = document.createElement("div");
+  lel.id = "rcLogoDrag";
+  lel.style.cssText = "position:absolute;cursor:move;touch-action:none;border:1px dashed #fff;";
+  const update = () => {
+    lel.style.left = (rcLogoPos.x * 100) + "%";
+    lel.style.top = (rcLogoPos.y * 100) + "%";
+    lel.style.width = (rcLogoPos.size * 100) + "%";
+    lel.style.aspectRatio = "1";
+    lel.style.backgroundImage = `url(${$("rcLogoPrev").src})`;
+    lel.style.backgroundSize = "contain";
+    lel.style.backgroundRepeat = "no-repeat";
+    const shape = ($("rcLogoShape") || {}).value || "square";
+    lel.style.borderRadius = shape === "circle" ? "50%" : "0";
+    lel.style.overflow = "hidden";
+  };
+  update();
+  let sx, sy, ox, oy;
+  lel.addEventListener("pointerdown", (e) => {
+    sx = e.clientX; sy = e.clientY; ox = rcLogoPos.x; oy = rcLogoPos.y;
+    lel.setPointerCapture(e.pointerId);
+  });
+  lel.addEventListener("pointermove", (e) => {
+    if (sx === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    rcLogoPos.x = Math.max(0, Math.min(1 - rcLogoPos.size, ox + (e.clientX - sx) / rect.width));
+    rcLogoPos.y = Math.max(0, Math.min(1 - rcLogoPos.size, oy + (e.clientY - sy) / rect.height));
+    update();
+  });
+  lel.addEventListener("pointerup", () => { sx = undefined; });
+  wrap.appendChild(lel);
+  // Update on shape change
+  $("rcLogoShape")?.addEventListener("change", update);
+}
+$("rcLogoShape")?.addEventListener("change", () => {
+  const lel = document.getElementById("rcLogoDrag");
+  if (lel) {
+    const shape = ($("rcLogoShape") || {}).value || "square";
+    lel.style.borderRadius = shape === "circle" ? "50%" : "0";
+  }
+});
+
+// ---- Subtitle live preview ----
+function rcUpdateSubPreview() {
+  const wrap = $("rcBlurWrap");
+  let sel = document.getElementById("rcSubPreview");
+  const text = ($("rcSubPreviewText") || {}).value || "";
+  const show = ($("rcSubOn") || {}).checked;
+  if (!text || !show) { if (sel) sel.remove(); return; }
+  if (!sel) {
+    sel = document.createElement("div");
+    sel.id = "rcSubPreview";
+    sel.style.cssText = "position:absolute;left:0;right:0;bottom:8%;text-align:center;pointer-events:none;padding:0 10px;";
+    wrap.appendChild(sel);
+  }
+  const color = ($("rcSubColor") || {}).value || "#ffffff";
+  const size = ($("rcSubSize") || {}).value || "28";
+  const font = ($("rcSubFont") || {}).value || "Aka07";
+  const shadeColor = ($("rcShadeColor") || {}).value || "#000000";
+  const thick = ($("rcShadeThick") || {}).value || "4";
+  sel.style.color = color;
+  sel.style.fontSize = size + "px";
+  sel.style.fontFamily = `"${font}", sans-serif`;
+  sel.style.fontWeight = "bold";
+  sel.style.textShadow = `-${thick}px 0 0 ${shadeColor}, ${thick}px 0 0 ${shadeColor}, 0 -${thick}px 0 ${shadeColor}, 0 ${thick}px 0 ${shadeColor}`;
+  sel.textContent = text;
+}
+["rcSubPreviewText", "rcSubOn", "rcSubColor", "rcSubSize", "rcSubFont", "rcShadeColor", "rcShadeThick"].forEach((id) => {
+  document.getElementById(id)?.addEventListener("input", rcUpdateSubPreview);
+  document.getElementById(id)?.addEventListener("change", rcUpdateSubPreview);
+});
+
 $("rcAddBlur")?.addEventListener("click", rcAddBlurBox);
 $("rcClearBlur")?.addEventListener("click", () => {
   rcBlurRegions.length = 0;
   document.querySelectorAll("#rcBlurWrap > div").forEach((e) => e.remove());
   rcRenderBlurList();
 });
+
+
+/** Get subtitle/logo options from UI. */
+function getStyleOpts() {
+  return {
+    subOn: ($("rcSubOn") || {}).checked !== false,
+    subColor: ($("rcSubColor") || {}).value || "#ffffff",
+    subSize: parseInt((($("rcSubSize") || {}).value || "28"), 10),
+    subFont: ($("rcSubFont") || {}).value || "Aka07",
+    shadeColor: ($("rcShadeColor") || {}).value || "#000000",
+    shadeThick: parseInt((($("rcShadeThick") || {}).value || "4"), 10),
+    logoImg: rcLogoImg,
+    logoPos: rcLogoImg ? rcLogoPos : null,
+    logoShape: ($("rcLogoShape") || {}).value || "square",
+  };
+}
 
 // Sync-only: uses saved rcLastRun, skips transcribe/script/TTS
 $("rcSyncOnly")?.addEventListener("click", async () => {
@@ -870,6 +996,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       });
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        ...getStyleOpts(),
         width: 720, height: 1280,
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
@@ -900,6 +1027,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       });
       let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        ...getStyleOpts(),
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
@@ -1074,8 +1202,19 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", "အသံရပါပြီ (" + fmtSize(audioBlob.size) + ") ✅", "ok");
     setStep("audio", "done");
 
+    // If SRT uploaded + dubbing: use SRT directly, skip transcribe/translate
+    const rcStyleVal0 = ($("rcStyle") || {}).value || "story";
+    let useSrtDirect = false;
+    if (rcSrtSegments && rcSrtSegments.length && rcStyleVal0 === "wordbyword") {
+      log("rc", `📄 SRT သုံးမယ် (${rcSrtSegments.length} ကြောင်း) — transcribe/translate skip`, "ok");
+      setStep("transcribe", "done");
+      setStep("script", "done");
+      useSrtDirect = true;
+    }
+
     // ---- step 2: transcribe (chunked if big) ----
     setStep("transcribe", "run");
+    if (!useSrtDirect) {
     log("rc", "2️⃣ စာသားပြောင်းနေပါတယ် (Groq Whisper)…");
     const CHUNK_MB = 15;
     const sizeMB = audioBlob.size / 1048576;
@@ -1125,6 +1264,13 @@ $("startRecap").addEventListener("click", async () => {
       for (const s of segs) allSegs.push({ start: s.start + start, end: s.end + start, text: s.text });
     }
     await ff.deleteFile("taudio.mp3");
+    } // end if (!useSrtDirect)
+    if (useSrtDirect) {
+      allSegs.length = 0;
+      for (const s of rcSrtSegments) allSegs.push({ start: s.start, end: s.end, text: s.text });
+      $("rcTranscript").value = allSegs.map((s) => "[" + fmtClock(s.start) + "] " + s.text).join("\n").slice(0, 6000);
+      log("rc", `SRT transcript ရပါပြီ (${allSegs.length} ကြောင်း) ✅`, "ok");
+    }
     allSegs.sort((a, b) => a.start - b.start);
     const transcriptText = allSegs.map((s) => "[" + fmtClock(s.start) + "] " + s.text).join("\n");
     $("rcTranscript").value = transcriptText.slice(0, 6000);
@@ -1136,7 +1282,14 @@ $("startRecap").addEventListener("click", async () => {
     const rcStyle = ($("rcStyle") || {}).value || "story";
     const watchMode = ($("rcWatchMode") || {}).value || "frames";
     let segments = null;
-    if (rcStyle === "wordbyword") {
+    if (useSrtDirect) {
+      // SRT direct: use allSegs as segments (already translated)
+      segments = allSegs.map((s) => ({ start: s.start, end: s.end, text: s.text }));
+      $("rcScript").value = segments.map((s) => `[${fmtClock(s.start)}-${fmtClock(s.end)}] ${s.text}`).join("\n");
+      log("rc", `SRT script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
+      setStep("script", "done");
+    }
+    if (!segments && rcStyle === "wordbyword") {
       // Word-by-word dubbing: translate transcript directly, keep original timing
       setProgress("rc", 55, "စာသားတွေ မြန်မာလို ပြန်နေပါတယ်…");
       log("rc", "🎙️ Word-by-word dubbing — transcript ကို တိုက်ရိုက် ဘာသာပြန်နေပါတယ်…");
@@ -1317,6 +1470,7 @@ $("startRecap").addEventListener("click", async () => {
       });
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+        ...getStyleOpts(),
         width: 720, height: 1280,
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
