@@ -183,3 +183,206 @@ function wrapText(ctx, text, maxWidth) {
   if (cur) lines.push(cur);
   return lines.length ? lines : [text];
 }
+
+/**
+ * Audio-first recap export: video adjusts to match narration audio per segment.
+ * For each segment: play video clip; if shorter than audio, freeze last frame.
+ * @param {Blob} videoBlob - source video
+ * @param {Array} segments - [{start, end, audioBlob, text}]
+ * @param {Object} opts - {flip, watermarkText, width, height, onprog}
+ */
+export async function canvasRecapSync(videoBlob, segments, opts = {}) {
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null } = opts;
+
+  const url = URL.createObjectURL(videoBlob);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.src = url;
+  await new Promise((res, rej) => {
+    video.onloadedmetadata = res;
+    video.onerror = () => rej(new Error("video ဖတ်မရပါ"));
+  });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const scale = Math.max(width / vw, height / vh);
+  const dw = vw * scale, dh = vh * scale;
+  const dx = (width - dw) / 2, dy = (height - dh) / 2;
+
+  // Prepare audio elements with durations
+  const segData = [];
+  for (const s of segments) {
+    const aurl = URL.createObjectURL(s.audioBlob);
+    const a = new Audio(aurl);
+    const d = await new Promise((res) => {
+      a.onloadedmetadata = () => res(a.duration || 0);
+      a.onerror = () => res(0);
+    });
+    segData.push({ ...s, audioEl: a, audioDur: d, audioUrl: aurl });
+  }
+
+  const totalDur = segData.reduce((sum, s) => sum + s.audioDur, 0);
+
+  // Setup recording
+  const stream = canvas.captureStream(30);
+  // Mix all audio via Web Audio
+  const actx = new AudioContext();
+  const dest = actx.createMediaStreamDestination();
+  const sources = [];
+  for (const s of segData) {
+    const src = actx.createMediaElementSource(s.audioEl);
+    src.connect(dest);
+    sources.push(src);
+  }
+  const atrack = dest.stream.getAudioTracks()[0];
+  if (atrack) stream.addTrack(atrack);
+
+  const mimeTypes = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  let mimeType = "";
+  for (const mt of mimeTypes) {
+    if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; }
+  }
+  if (!mimeType) throw new Error("MediaRecorder မရပါ");
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 });
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const recDone = new Promise((res) => { rec.onstop = res; });
+
+  const drawFrame = (subtitleText) => {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, width, height);
+    ctx.save();
+    if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, dx, dy, dw, dh);
+    ctx.restore();
+    if (watermarkText) {
+      ctx.font = "22px sans-serif";
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillText(watermarkText, 12, height - 36);
+    }
+    if (subtitleText) {
+      ctx.font = "bold 28px sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "rgba(0,0,0,0.9)";
+      ctx.lineWidth = 4;
+      const lines = wrapText(ctx, subtitleText, width - 40);
+      const y0 = height - 100 - (lines.length - 1) * 34;
+      lines.forEach((ln, i) => {
+        ctx.strokeText(ln, width / 2, y0 + i * 34);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(ln, width / 2, y0 + i * 34);
+      });
+      ctx.textAlign = "left";
+    }
+  };
+
+  rec.start(1000);
+  let elapsed = 0;
+
+  for (let i = 0; i < segData.length; i++) {
+    const s = segData[i];
+    const c = Math.max(0.5, s.end - s.start); // video clip duration
+    const d = s.audioDur; // audio duration
+
+    if (onprog) { try { onprog(elapsed / totalDur, i, segData.length); } catch (_) {} }
+
+    // Seek video to segment start
+    video.currentTime = s.start;
+    await new Promise((res) => {
+      const h = () => { video.removeEventListener("seeked", h); res(); };
+      video.addEventListener("seeked", h);
+      setTimeout(res, 3000);
+    });
+
+    // Play audio
+    const audioDone = new Promise((res) => {
+      s.audioEl.onended = res;
+      setTimeout(res, (d + 2) * 1000);
+    });
+    try { await s.audioEl.play(); } catch (_) {}
+
+    // Play video for min(c, d), then freeze if needed
+    const playTime = Math.min(c, d);
+    video.play();
+    const t0 = performance.now();
+    await new Promise((res) => {
+      const check = () => {
+        const el = (performance.now() - t0) / 1000;
+        drawFrame(s.text);
+        if (el < playTime && !video.ended) {
+          requestAnimationFrame(check);
+        } else {
+          res();
+        }
+      };
+      check();
+    });
+    video.pause();
+
+    // Freeze remaining time (if audio longer than video clip)
+    const freezeTime = d - playTime;
+    if (freezeTime > 0.1) {
+      // Keep last frame, draw with slight zoom
+      const fz0 = performance.now();
+      await new Promise((res) => {
+        const check = () => {
+          const el = (performance.now() - fz0) / 1000;
+          const zp = Math.min(el / Math.max(freezeTime, 0.1), 1);
+          const zs = 1 + 0.12 * zp;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, width, height);
+          ctx.save();
+          if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
+          const zdw = dw * zs, zdh = dh * zs;
+          const zdx = (width - zdw) / 2, zdy = (height - zdh) / 2;
+          ctx.drawImage(video, zdx, zdy, zdw, zdh);
+          ctx.restore();
+          if (watermarkText) {
+            ctx.font = "22px sans-serif";
+            ctx.fillStyle = "rgba(255,255,255,0.75)";
+            ctx.fillText(watermarkText, 12, height - 36);
+          }
+          if (s.text) {
+            ctx.font = "bold 28px sans-serif";
+            ctx.textAlign = "center";
+            ctx.strokeStyle = "rgba(0,0,0,0.9)";
+            ctx.lineWidth = 4;
+            const lines = wrapText(ctx, s.text, width - 40);
+            const y0 = height - 100 - (lines.length - 1) * 34;
+            lines.forEach((ln, idx) => {
+              ctx.strokeText(ln, width / 2, y0 + idx * 34);
+              ctx.fillStyle = "#fff";
+              ctx.fillText(ln, width / 2, y0 + idx * 34);
+            });
+            ctx.textAlign = "left";
+          }
+          if (el < freezeTime) {
+            requestAnimationFrame(check);
+          } else {
+            res();
+          }
+        };
+        check();
+      });
+    }
+
+    await audioDone;
+    elapsed += d;
+    URL.revokeObjectURL(s.audioUrl);
+  }
+
+  rec.stop();
+  await recDone;
+  URL.revokeObjectURL(url);
+  try { await actx.close(); } catch (_) {}
+
+  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext };
+}
