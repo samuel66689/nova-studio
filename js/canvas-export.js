@@ -118,21 +118,10 @@ export async function canvasExport(videoBlob, opts = {}) {
 
     // Subtitles
     const sub = subtitles.find((s) => t >= s.start && t < s.end);
-    if (sub) {
-      ctx.font = "bold 28px sans-serif";
-      ctx.textAlign = "center";
-      // Outline
-      ctx.strokeStyle = "rgba(0,0,0,0.9)";
-      ctx.lineWidth = 4;
-      const lines = wrapText(ctx, sub.text, width - 40);
-      const y0 = height - 100 - (lines.length - 1) * 34;
-      lines.forEach((ln, i) => {
-        ctx.strokeText(ln, width / 2, y0 + i * 34);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(ln, width / 2, y0 + i * 34);
-      });
-      ctx.textAlign = "left";
+    if (sub && subOn) {
+      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
     }
+    if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
 
     if (onprog) {
       try { onprog(t / dur); } catch (_) {}
@@ -272,7 +261,10 @@ export async function fixWebMDuration(blob, durationSec) {
  * Output duration = video duration. Audio sped up (max 1.3x) if too long.
  */
 export async function canvasDubSync(videoBlob, segments, opts = {}) {
-  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [] } = opts;
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
+    subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
+    shadeColor = "#000000", shadeThick = 4,
+    logoImg = null, logoPos = null, logoShape = "square" } = opts;
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -346,20 +338,10 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
     }
     try { drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, blurRegions, t); } catch (_) {}
     const sub = segData.find((s) => t >= s.start && t < s.end);
-    if (sub && sub.text) {
-      ctx.font = "bold 28px sans-serif";
-      ctx.textAlign = "center";
-      ctx.strokeStyle = "rgba(0,0,0,0.9)";
-      ctx.lineWidth = 4;
-      const lines = wrapText(ctx, sub.text, width - 40);
-      const y0 = height - 100 - (lines.length - 1) * 34;
-      lines.forEach((ln, i) => {
-        ctx.strokeText(ln, width / 2, y0 + i * 34);
-        ctx.fillStyle = "#fff";
-        ctx.fillText(ln, width / 2, y0 + i * 34);
-      });
-      ctx.textAlign = "left";
+    if (sub && sub.text && subOn) {
+      drawStyledSubtitle(ctx, sub.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
     }
+    if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
     if (onprog) { try { onprog(t / dur); } catch (_) {} }
   };
 
@@ -407,6 +389,43 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
 }
 
+/** Draw styled subtitle with user options. */
+function drawStyledSubtitle(ctx, text, width, height, opts) {
+  const {
+    color = "#ffffff", size = 28, font = "Aka07",
+    shadeColor = "#000000", thickness = 4,
+  } = opts;
+  ctx.font = `bold ${size}px "${font}", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.strokeStyle = shadeColor;
+  ctx.lineWidth = parseInt(thickness) || 4;
+  ctx.fillStyle = color;
+  const lines = wrapText(ctx, text, width - 40);
+  const lh = size * 1.2;
+  const y0 = height - 100 - (lines.length - 1) * lh;
+  lines.forEach((ln, i) => {
+    const y = y0 + i * lh;
+    ctx.strokeText(ln, width / 2, y);
+    ctx.fillText(ln, width / 2, y);
+  });
+  ctx.textAlign = "left";
+}
+
+/** Draw logo at position with shape. */
+function drawLogo(ctx, logoImg, width, height, pos, shape) {
+  if (!logoImg) return;
+  const size = pos.size * width;
+  const x = pos.x * width, y = pos.y * height;
+  ctx.save();
+  if (shape === "circle") {
+    ctx.beginPath();
+    ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+    ctx.clip();
+  }
+  ctx.drawImage(logoImg, x, y, size, size);
+  ctx.restore();
+}
+
 function wrapText(ctx, text, maxWidth) {
   const words = String(text).split(/\s+/);
   const lines = [];
@@ -432,7 +451,10 @@ function wrapText(ctx, text, maxWidth) {
  * @param {Object} opts - {flip, watermarkText, width, height, onprog}
  */
 export async function canvasRecapSync(videoBlob, segments, opts = {}) {
-  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [] } = opts;
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
+    subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
+    shadeColor = "#000000", shadeThick = 4,
+    logoImg = null, logoPos = null, logoShape = "square" } = opts;
 
   const url = URL.createObjectURL(videoBlob);
   const video = document.createElement("video");
@@ -594,20 +616,10 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
             ctx.fillStyle = "rgba(255,255,255,0.75)";
             ctx.fillText(watermarkText, 12, height - 36);
           }
-          if (s.text) {
-            ctx.font = "bold 28px sans-serif";
-            ctx.textAlign = "center";
-            ctx.strokeStyle = "rgba(0,0,0,0.9)";
-            ctx.lineWidth = 4;
-            const lines = wrapText(ctx, s.text, width - 40);
-            const y0 = height - 100 - (lines.length - 1) * 34;
-            lines.forEach((ln, idx) => {
-              ctx.strokeText(ln, width / 2, y0 + idx * 34);
-              ctx.fillStyle = "#fff";
-              ctx.fillText(ln, width / 2, y0 + idx * 34);
-            });
-            ctx.textAlign = "left";
+          if (s.text && subOn) {
+            drawStyledSubtitle(ctx, s.text, width, height, { color: subColor, size: subSize, font: subFont, shadeColor, thickness: shadeThick });
           }
+          if (logoImg && logoPos) drawLogo(ctx, logoImg, width, height, logoPos, logoShape);
           if (el < freezeTime) {
             requestAnimationFrame(check);
           } else {
