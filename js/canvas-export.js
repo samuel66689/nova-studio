@@ -642,5 +642,5 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   try { await actx.close(); } catch (_) {}
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext };
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur };
 }
