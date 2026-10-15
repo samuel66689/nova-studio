@@ -174,12 +174,15 @@ const RECAP_SYSTEM = [
   "STRICT RULES:",
   "1. NEVER use literary/formal particles: သည်, ၏, ၍, ထို့ကြောင့်, သို့သော်. Use natural spoken forms only.",
   "2. Cover the story IN ORDER from the transcript. Keep every key twist, stay concise but engaging.",
-  "3. Output ONLY segment lines, one per line, in this EXACT format:",
+  "3. ONLY describe what is in the transcript — never invent events or details.",
+  "4. Do NOT add unnecessary dramatic/florid words — keep the language natural and direct.",
+  "5. Output ONLY segment lines, one per line, in this EXACT format:",
   "[00:00-00:12] narration text here",
   "[00:12-00:25] narration text here",
-  "4. Each segment must be 5 to 12 seconds of spoken narration.",
-  "5. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
-  "6. No intro, no outro, no markdown, no numbering — only the segment lines.",
+  "6. Each segment must be 5 to 12 seconds of spoken narration.",
+  "7. The LAST segment may end with a short teaser hook for the next episode (one sentence).",
+  "8. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
+  "9. No intro, no markdown, no numbering — only the segment lines.",
 ].join("\n");
 
 async function geminiGenerate(model, systemText, userText, maxTokens) {
@@ -195,13 +198,16 @@ const RECAP_VISION_SYSTEM = [
   "1. NEVER use literary/formal particles: သည်, ၏, ၍, ထို့ကြောင့်, သို့သော်. Use natural spoken forms only.",
   "2. CHARACTER IDENTITY: never mix up who is who. If a name is spoken or shown, use it only for that person; unknown people get role labels.",
   "3. Cover the story IN ORDER. Keep every key twist, stay concise but engaging.",
-  "4. You MAY quote a short real spoken line from the transcript when it is impactful — never invent dialogue that is not in the transcript.",
-  "5. Output ONLY segment lines, one per line, in this EXACT format:",
+  "4. ONLY describe what is actually visible or spoken in the video — never invent events, actions or details not shown.",
+  "5. Do NOT add unnecessary dramatic/florid words — keep the language natural and direct.",
+  "6. You MAY quote a short real spoken line from the transcript when it is impactful — never invent dialogue that is not in the transcript.",
+  "7. Output ONLY segment lines, one per line, in this EXACT format:",
   "[00:00-00:12] narration text here",
   "[00:12-00:25] narration text here",
-  "6. Each segment must be 5 to 12 seconds of spoken narration.",
-  "7. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
-  "8. No intro, no outro, no markdown, no numbering — only the segment lines.",
+  "8. Each segment must be 5 to 12 seconds of spoken narration.",
+  "9. The LAST segment may end with a short teaser hook for the next episode (one sentence).",
+  "10. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
+  "11. No intro, no markdown, no numbering — only the segment lines.",
 ].join("\n");
 
 /** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
