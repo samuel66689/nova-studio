@@ -1,12 +1,12 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
-import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261014m";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261014m";
+import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
+import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261014m";
+} from "./js/api.js?v=20261015b";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -360,20 +360,25 @@ function escDrawtext(s) {
   return String(s).replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
-/** Build ffmpeg args: base filters + optional blur-box chain (filter_complex). */
-function buildEditArgs(baseFilters, regions, dims) {
-  if (!regions.length) {
-    return baseFilters.length === 0
-      ? ["-i", "input.mp4", "-c", "copy", "-movflags", "+faststart", "output.mp4"]
-      : ["-i", "input.mp4", "-vf", baseFilters.join(","),
-         "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-         "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "output.mp4"];
-  }
+/** Pass 1: simple -vf base filters (crop/flip/watermark/compress/subtitles) -> out.
+ *  Blur boxes are NOT in this pass — they run separately in pass 2 so each
+ *  FFmpeg run holds less in WASM memory (the combined single-pass graph
+ *  caused FS/memory errors on phones). */
+function buildPass1Args(baseFilters, out) {
+  if (!baseFilters.length)
+    return ["-i", "input.mp4", "-c", "copy", "-movflags", "+faststart", out];
+  return ["-i", "input.mp4", "-vf", baseFilters.join(","),
+    "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out];
+}
+
+/** Pass 2: blur-box chain ONLY, applied to the pass-1 result -> output.mp4.
+ *  dims must be the post-pass-1 frame size (outDims() already accounts for
+ *  crop/compress, the only geometry-changing base filters). */
+function buildPass2Args(regions, dims) {
   // Safety margin: real crop output can differ by ~2px from our mirror math.
   const W = dims.W - 2, H = dims.H - 2;
-  let fc, last;
-  if (baseFilters.length) { fc = "[0:v]" + baseFilters.join(",") + "[v0]"; last = "[v0]"; }
-  else { fc = "[0:v]copy[v0]"; last = "[v0]"; }
+  let fc = "[0:v]copy[v0]", last = "[v0]", used = 0;
   regions.forEach((r, i) => {
     let cx = Math.max(0, Math.round(W * r.x / 2) * 2);
     let cy = Math.max(0, Math.round(H * r.y / 2) * 2);
@@ -389,8 +394,9 @@ function buildEditArgs(baseFilters, regions, dims) {
     fc += ";" + last + "[bx" + i + "]overlay=" + cx + ":" + cy +
           ":enable='between(t," + t0 + "," + t1 + ")'[v" + (i + 1) + "]";
     last = "[v" + (i + 1) + "]";
+    used++;
   });
-  return ["-i", "input.mp4", "-filter_complex", fc,
+  return ["-i", "temp.mp4", "-filter_complex", fc,
     "-map", last, "-map", "0:a?",
     "-c:v", "libx264", "-preset", "fast", "-crf", "23",
     "-c:a", "aac", "-b:a", "128k",
@@ -433,15 +439,17 @@ $("startEdit").addEventListener("click", async () => {
     for (const [n, d] of Object.entries(files)) await ff.writeFile(n, d);
 
     let args, dropped = [];
-    const buildArgs = (filters) => buildEditArgs(filters, blurRegions, dims);
+    const needBlur = blurRegions.length > 0;
+    const pass1Out = needBlur ? "temp.mp4" : "output.mp4";
 
-    // Try full filter chain; if it fails, drop subtitle/watermark (font ပြဿနာ) and retry.
+    // ---- Pass 1: base filters (crop/flip/watermark/compress/subtitles) ----
+    // On failure, drop subtitle/watermark (font ပြဿနာ) and retry — blur is untouched here.
     let cur = vf.slice();
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
-      args = buildArgs(cur);
-      log("ed", "Run #" + (attempt + 1) + (cur.length ? " filters: " + cur.join(" | ") : " (copy mode)") +
-        (blurRegions.length ? " + " + blurRegions.length + " blur box" : ""));
+      args = buildPass1Args(cur, pass1Out);
+      log("ed", "အဆင့် ၁/" + (needBlur ? "၂" : "၁") + " — Run #" + (attempt + 1) +
+        (cur.length ? " filters: " + cur.join(" | ") : " (copy mode)"));
       try {
         await ff.exec(args);
         lastErr = null;
@@ -456,12 +464,6 @@ $("startEdit").addEventListener("click", async () => {
         } else if (wmIdx >= 0) {
           cur.splice(wmIdx, 1); dropped.push("watermark");
           log("ed", "⚠️ watermark မရလို့ ကျော်ပြီး ဆက်လုပ်ပါမယ်", "err");
-        } else if (blurRegions.length > 0) {
-          // Complex blur filter failed (likely memory) — drop blur and retry
-          const n = blurRegions.length;
-          blurRegions.length = 0;
-          dropped.push("blur box (" + n + ")");
-          log("ed", "⚠️ blur filter မနိုင်လို့ ဖြုတ်ပြီး ဆက်လုပ်ပါမယ် (" + n + " box)", "err");
         } else {
           break;
         }
@@ -469,9 +471,25 @@ $("startEdit").addEventListener("click", async () => {
     }
     if (lastErr) throw lastErr;
 
+    // ---- Pass 2: blur boxes only, on the pass-1 result ----
+    if (needBlur) {
+      log("ed", "အဆင့် ၂/၂ — blur box " + blurRegions.length + " ခု ထည့်နေပါတယ်…");
+      try {
+        await ff.exec(buildPass2Args(blurRegions, dims));
+      } catch (e) {
+        // Blur still failed — deliver the pass-1 result without blur.
+        const n = blurRegions.length;
+        blurRegions.length = 0;
+        dropped.push("blur box (" + n + ")");
+        log("ed", "⚠️ blur filter မနိုင်လို့ ဖြုတ်ပြီး ဆက်လုပ်ပါမယ် (" + n + " box)", "err");
+        const tdata = await ff.readFile("temp.mp4");
+        await ff.writeFile("output.mp4", tdata);
+      }
+    }
+
     const data = await ff.readFile("output.mp4");
     const blob = new Blob([data], { type: "video/mp4" });
-    for (const n of ["input.mp4", "subs.srt", "output.mp4"]) { try { await ff.deleteFile(n); } catch (_) {} }
+    for (const n of ["input.mp4", "subs.srt", "temp.mp4", "output.mp4"]) { try { await ff.deleteFile(n); } catch (_) {} }
     const { row } = dlRow(baseName + "_edited.mp4", blob);
     $("edResults").appendChild(row);
     setProgress("ed", 100, "ပြီးပါပြီ ✅");
