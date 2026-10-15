@@ -6,7 +6,7 @@ import {
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261015b";
+} from "./js/api.js?v=20261015c";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
