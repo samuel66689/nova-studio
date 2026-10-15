@@ -9,7 +9,8 @@ import {
   idbSet, idbGet, idbDel,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-} from "./js/api.js?v=20261015d";
+  geminiText,
+} from "./js/api.js?v=20261015i";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1041,6 +1042,33 @@ $("startRecap").addEventListener("click", async () => {
     const rcStyle = ($("rcStyle") || {}).value || "story";
     const watchMode = ($("rcWatchMode") || {}).value || "frames";
     let segments = null;
+    if (rcStyle === "wordbyword") {
+      // Word-by-word dubbing: translate transcript directly, keep original timing
+      setProgress("rc", 55, "စာသားတွေ မြန်မာလို ပြန်နေပါတယ်…");
+      log("rc", "🎙️ Word-by-word dubbing — transcript ကို တိုက်ရိုက် ဘာသာပြန်နေပါတယ်…");
+      segments = [];
+      const BATCH = 10;
+      for (let i = 0; i < allSegs.length; i += BATCH) {
+        const batch = allSegs.slice(i, i + BATCH);
+        const prompt = "Translate each line to natural spoken Burmese (စကားပြော). " +
+          "Return ONLY the translations, one per line, in the same order. " +
+          "No numbering, no explanations.\n\n" +
+          batch.map((s, j) => `${j + 1}. ${s.text}`).join("\n");
+        try {
+          const out = await geminiText(prompt, 8000);
+          const lines = out.trim().split("\n").map((l) => l.replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean);
+          batch.forEach((s, j) => {
+            segments.push({ start: s.start, end: s.end, text: lines[j] || s.text });
+          });
+        } catch (e) {
+          // Fallback: use original text
+          batch.forEach((s) => segments.push({ start: s.start, end: s.end, text: s.text }));
+        }
+        setProgress("rc", 55 + (i / allSegs.length) * 10, `ဘာသာပြန်နေပါတယ်… (${Math.min(i + BATCH, allSegs.length)}/${allSegs.length})`);
+      }
+      log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
+      setStep("script", "done");
+    }
     if (watchMode === "fullvideo") {
       // Full video via Gemini Files API — AI watches the entire video
       try {
