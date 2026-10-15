@@ -775,6 +775,7 @@ function rcAddBlurBox() {
   rcBlurRegions.push(r);
   const wrap = $("rcBlurWrap");
   const el = document.createElement("div");
+  el.className = "rcbox";
   el.style.cssText = "position:absolute;border:2px solid #4da6ff;background:rgba(77,166,255,0.2);cursor:move;touch-action:none;";
   // Resize handle (bottom-right)
   const rh = document.createElement("div");
@@ -971,7 +972,7 @@ function rcUpdateSubPreview() {
 $("rcAddBlur")?.addEventListener("click", rcAddBlurBox);
 $("rcClearBlur")?.addEventListener("click", () => {
   rcBlurRegions.length = 0;
-  document.querySelectorAll("#rcBlurWrap > div").forEach((e) => e.remove());
+  document.querySelectorAll("#rcBlurWrap .rcbox").forEach((e) => e.remove());
   rcRenderBlurList();
 });
 
@@ -985,10 +986,30 @@ function getStyleOpts() {
     subFont: ($("rcSubFont") || {}).value || "Aka07",
     shadeColor: ($("rcShadeColor") || {}).value || "#000000",
     shadeThick: parseInt((($("rcShadeThick") || {}).value || "4"), 10),
+    subPos: ($("rcSubPos") || {}).value || "bottom",
     logoImg: rcLogoImg,
     logoPos: rcLogoImg ? rcLogoPos : null,
     logoShape: ($("rcLogoShape") || {}).value || "square",
   };
+}
+
+/** Fix duration metadata via FFmpeg stream-copy remux (for MP4/WebM) */
+async function fixDuration(blob, ext) {
+  try {
+    if (blob.size > 350 * 1048576) return blob; // skip if too large for phone memory
+    const ff = await ensureFFmpeg((m, c) => log("rc", m, c));
+    const i = "rec_in." + ext, o = "rec_out." + ext;
+    await ff.writeFile(i, await fetchFile(blob));
+    await ff.exec(["-i", i, "-c", "copy",
+      ...(ext === "mp4" ? ["-movflags", "+faststart"] : []), o]);
+    const d = await ff.readFile(o);
+    for (const n of [i, o]) { try { await ff.deleteFile(n); } catch (_) {} }
+    log("rc", "⏱️ Duration metadata ပြင်ပြီးပါပြီ ✅", "ok");
+    return new Blob([d], { type: blob.type });
+  } catch (e) {
+    log("rc", "Duration fix မအောင်မြင်ပါ: " + e.message, "err");
+    return blob;
+  }
 }
 
 // Sync-only: uses saved rcLastRun, skips transcribe/script/TTS
@@ -1050,12 +1071,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
       // Fix WebM duration metadata (for CapCut/editors)
-      if (ext === "webm" && recDur > 0) {
-        try {
-          log("rc", "🔧 Duration metadata ပြင်နေပါတယ်…");
-          finalBlob = await fixWebMDuration(finalBlob, recDur);
-        } catch (e) { console.warn("duration fix failed", e); }
-      }
+      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
@@ -1192,6 +1208,7 @@ $("previewVoice").addEventListener("click", async () => {
 });
 
 $("startRecap").addEventListener("click", async () => {
+  rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const lang = $("rcLang").value;
   const voice = $("rcVoice").value;
@@ -1529,12 +1546,7 @@ $("startRecap").addEventListener("click", async () => {
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
-      if (ext === "webm" && recDur > 0) {
-        try {
-          log("rc", "🔧 Duration metadata ပြင်နေပါတယ်…");
-          finalBlob = await fixWebMDuration(finalBlob, recDur);
-        } catch (e) { console.warn("duration fix failed", e); }
-      }
+      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
       // SRT + script files
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
