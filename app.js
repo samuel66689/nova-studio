@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
-import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015b";
+import { canvasExport, canvasRecapSync } from "./js/canvas-export.js?v=20261015c";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -756,9 +756,80 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
 let rcFile = null;
 let rcLastRun = null; // {segments, segPieces, baseName} — retry sync without re-TTS
 let rcHandoff = null; // {blob, name} — recap output for the editor handoff
+// ---- Recap Nova blur boxes (unified flow) ----
+const rcBlurRegions = [];
+let rcBlurUrl = null;
+function rcShowBlurPreview() {
+  const sec = $("rcBlurSection");
+  if (!rcFile) { sec.style.display = "none"; return; }
+  sec.style.display = "";
+  const v = $("rcBlurPrev");
+  if (rcBlurUrl) URL.revokeObjectURL(rcBlurUrl);
+  rcBlurUrl = URL.createObjectURL(rcFile);
+  v.src = rcBlurUrl;
+}
+function rcAddBlurBox() {
+  const r = { x: 0.1, y: 0.05, w: 0.8, h: 0.15, t0: 0, t1: 9999, strength: 15 };
+  rcBlurRegions.push(r);
+  const wrap = $("rcBlurWrap");
+  const el = document.createElement("div");
+  el.style.cssText = "position:absolute;border:2px solid #4da6ff;background:rgba(77,166,255,0.2);cursor:move;touch-action:none;";
+  const update = () => {
+    el.style.left = (r.x * 100) + "%";
+    el.style.top = (r.y * 100) + "%";
+    el.style.width = (r.w * 100) + "%";
+    el.style.height = (r.h * 100) + "%";
+  };
+  update();
+  // Simple drag
+  let sx, sy, ox, oy;
+  el.addEventListener("pointerdown", (e) => {
+    sx = e.clientX; sy = e.clientY; ox = r.x; oy = r.y;
+    el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (sx === undefined) return;
+    const rect = wrap.getBoundingClientRect();
+    r.x = Math.max(0, Math.min(1 - r.w, ox + (e.clientX - sx) / rect.width));
+    r.y = Math.max(0, Math.min(1 - r.h, oy + (e.clientY - sy) / rect.height));
+    update();
+  });
+  el.addEventListener("pointerup", () => { sx = undefined; });
+  wrap.appendChild(el);
+  r._el = el; r._update = update;
+  rcRenderBlurList();
+}
+function rcRenderBlurList() {
+  const list = $("rcBlurList");
+  list.innerHTML = "";
+  rcBlurRegions.forEach((r, i) => {
+    const d = document.createElement("div");
+    d.className = "part";
+    d.innerHTML = `<span>Box ${i + 1}</span>
+      <label>Blur<input type="number" value="${r.strength}" min="1" max="30" style="width:60px;"></label>
+      <button class="ghost" style="padding:4px 10px;">❌</button>`;
+    d.querySelector("input").addEventListener("input", (e) => {
+      r.strength = Math.max(1, Math.min(30, parseInt(e.target.value) || 15));
+    });
+    d.querySelector("button").onclick = () => {
+      rcBlurRegions.splice(i, 1);
+      if (r._el) r._el.remove();
+      rcRenderBlurList();
+    };
+    list.appendChild(d);
+  });
+}
+$("rcAddBlur")?.addEventListener("click", rcAddBlurBox);
+$("rcClearBlur")?.addEventListener("click", () => {
+  rcBlurRegions.length = 0;
+  document.querySelectorAll("#rcBlurWrap > div").forEach((e) => e.remove());
+  rcRenderBlurList();
+});
+
 $("rcFile").addEventListener("change", async (e) => {
   rcFile = e.target.files[0] || null;
   $("rcResults").innerHTML = "";
+  rcShowBlurPreview();
   if (!rcFile) { $("rcFileInfo").textContent = ""; return; }
   $("rcFileInfo").textContent = rcFile.name + " (" + fmtSize(rcFile.size) + ") — duration ဖတ်နေပါတယ်…";
   try {
@@ -1057,6 +1128,7 @@ $("startRecap").addEventListener("click", async () => {
       const { blob: finalBlob, ext } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip,
         watermarkText: wantWm,
+        blurRegions: rcBlurRegions,
         width: 720, height: 1280,
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
