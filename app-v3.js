@@ -52,7 +52,7 @@ function dlRow(name, blob, mime) {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
-  a.textContent = "⬇️ Download";
+  a.textContent = "⬇️ ဒေါင်းလုဒ်";
   row.appendChild(s);
   row.appendChild(a);
   return { row, anchor: a };
@@ -64,6 +64,8 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".tabpage").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
+    document.querySelectorAll(".tab-btn").forEach((b) => b.setAttribute("aria-selected", String(b === btn)));
+    document.querySelectorAll(".tabpage").forEach((p) => p.setAttribute("aria-hidden", String(p.id !== "tab-" + btn.dataset.tab)));
     $("tab-" + btn.dataset.tab).classList.add("active");
   });
 });
@@ -80,13 +82,26 @@ function updateKeyStatus() {
   const parts = [];
   if (k.groq) parts.push("Groq ✅"); else parts.push("Groq ❌");
   if (k.gemini) parts.push("Gemini ✅"); else parts.push("Gemini ❌");
+  $("keyStatus").dataset.state = k.groq && k.gemini ? "ready" : "needed";
   $("keyStatus").textContent = parts.join(" · ") +
     (k.groq && k.gemini ? " — အဆင်သင့်ပါပြီ" : " — လိုအပ်တဲ့ key ထည့်ပါ");
 }
+document.querySelectorAll("[data-toggle-key]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const input = $(button.dataset.toggleKey);
+    const reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    button.textContent = reveal ? "ဖျောက်ရန်" : "ပြရန်";
+    button.setAttribute("aria-pressed", String(reveal));
+    button.setAttribute("aria-label", reveal ? "API key ကိုဖျောက်ရန်" : "API key ကိုပြရန်");
+  });
+});
 $("saveKeys").addEventListener("click", () => {
   saveKeys($("groqKey").value, $("geminiKey").value);
   updateKeyStatus();
-  alert("Keys တွေ သိမ်းပြီးပါပြီ ✅");
+  $("keyFeedback").textContent = "သိမ်းပြီးပါပြီ";
+  clearTimeout(window.keyFeedbackTimer);
+  window.keyFeedbackTimer = setTimeout(() => { $("keyFeedback").textContent = ""; }, 3000);
 });
 $("clearKeys").addEventListener("click", () => {
   if (!confirm("Keys တွေ ဖျက်မှာလား?")) return;
@@ -94,6 +109,14 @@ $("clearKeys").addEventListener("click", () => {
   $("groqKey").value = "";
   $("geminiKey").value = "";
   updateKeyStatus();
+  document.querySelectorAll("[data-toggle-key]").forEach((button) => {
+    $(button.dataset.toggleKey).type = "password";
+    button.textContent = "ပြရန်";
+    button.setAttribute("aria-pressed", "false");
+  });
+  $("keyFeedback").textContent = "Key များကို ရှင်းလင်းပြီးပါပြီ";
+  clearTimeout(window.keyFeedbackTimer);
+  window.keyFeedbackTimer = setTimeout(() => { $("keyFeedback").textContent = ""; }, 3000);
 });
 
 const TTS_SERVER = "https://nova-tts.onrender.com";

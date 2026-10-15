@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sam's Studio — Browser Video Tools</title>
+<title>Nova Studio — ဗီဒီယိုကိရိယာများ</title>
+<meta name="description" content="ဗီဒီယိုဖြတ်တောက်၊ ပြင်ဆင်ပြီး recap ဖန်တီးရန် Nova Studio။">
+<meta name="theme-color" content="#f4f6fb">
 <!-- COOP/COEP headers via service worker (ffmpeg.wasm multi-thread အတွက်) -->
 <script src="coi-serviceworker.js"></script>
 <script type="importmap">
@@ -89,42 +91,78 @@
   .bctl input { width:64px; padding:7px; font-size:13px; flex:0 0 auto; margin:0; }
   #blurList .part { margin-top:6px; }
 </style>
+<link rel="stylesheet" href="ui.css?v=20261016d">
 </head>
 <body>
 
-<header>
-  <h1>⚡ Sam's Studio</h1>
-  <p>Video tools တွေ browser ထဲမှာပဲ လုပ်မယ် — server မလို, upload မလို</p>
+<header class="site-header">
+  <div class="brand-lockup">
+    <span class="brand-mark" aria-hidden="true">⚡</span>
+    <div class="brand-copy">
+      <p class="brand-kicker">ဗီဒီယိုအလုပ်ခွင်</p>
+      <h1>Nova Studio</h1>
+    </div>
+  </div>
+  <p class="hero-copy">ဗီဒီယိုဖြတ်တောက်ခြင်း၊ ပြင်ဆင်ခြင်းနဲ့ recap ဖန်တီးခြင်းတွေကို တစ်နေရာတည်းမှာ လွယ်ကူစွာလုပ်ပါ။</p>
+  <div class="privacy-note">ဗီဒီယိုဖိုင်ကို ဒီ browser ထဲမှာပဲ လုပ်ဆောင်ပါတယ်</div>
 </header>
 
-<div class="card">
-  <h2>⚙️ API Keys</h2>
-  <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — console.groq.com)</span></label>
-  <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off">
-  <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — aistudio.google.com)</span></label>
-  <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off">
-  <div class="row">
-    <button id="saveKeys">💾 သိမ်းမယ်</button>
-    <button id="clearKeys" class="ghost">🗑 ဖျက်မယ်</button>
+<main id="main-content">
+<section class="card api-card" id="api-settings" aria-labelledby="api-title">
+  <div class="section-heading">
+    <span class="heading-icon" aria-hidden="true">🔑</span>
+    <div class="heading-copy">
+      <p class="eyebrow">စတင်အသုံးပြုရန်</p>
+      <h2 id="api-title">API ချိတ်ဆက်မှု</h2>
+      <p class="section-description">AI လုပ်ဆောင်ချက်တွေသုံးဖို့ key ထည့်ပြီး သိမ်းပါ။</p>
+    </div>
+    <div class="hint" id="keyStatus" data-state="needed" role="status" aria-live="polite">⚠️ Key မထည့်ရသေးပါ</div>
   </div>
-  <div class="hint" id="keyStatus">⚠️ Key မထည့်ရသေးပါ</div>
-  <div class="hint">Keys တွေက ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — ဘယ် server မှာမှ မတင်ဘူး။</div>
-</div>
+  <div class="key-grid">
+    <div class="key-field">
+      <label class="key-label" for="groqKey"><span>Groq API Key</span><span class="key-purpose">အသံကို စာသားပြောင်းရန်</span></label>
+      <div class="key-control">
+        <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off" spellcheck="false" aria-describedby="groqHelp">
+        <button type="button" class="key-toggle" data-toggle-key="groqKey" aria-label="Groq key ကိုပြရန်" aria-pressed="false">ပြရန်</button>
+      </div>
+      <p class="field-help" id="groqHelp">Groq console မှ key ကိုကူးထည့်ပါ။</p>
+    </div>
+    <div class="key-field">
+      <label class="key-label" for="geminiKey"><span>Gemini API Key</span><span class="key-purpose">Recap ဇာတ်ညွှန်းရေးရန်</span></label>
+      <div class="key-control">
+        <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off" spellcheck="false" aria-describedby="geminiHelp">
+        <button type="button" class="key-toggle" data-toggle-key="geminiKey" aria-label="Gemini key ကိုပြရန်" aria-pressed="false">ပြရန်</button>
+      </div>
+      <p class="field-help" id="geminiHelp">Google AI Studio မှ key ကိုကူးထည့်ပါ။</p>
+    </div>
+  </div>
+  <div class="key-footer">
+    <p class="hint">🔒 Key များကို ဒီ browser ရဲ့ localStorage မှာပဲ သိမ်းပါတယ်။ Server ပေါ်မတင်ပါ။</p>
+    <div class="key-actions">
+      <span class="key-feedback" id="keyFeedback" role="status" aria-live="polite"></span>
+      <button id="saveKeys">Key သိမ်းရန်</button>
+      <button id="clearKeys" class="ghost">ရှင်းလင်းရန်</button>
+    </div>
+  </div>
+</section>
 
-<nav class="tabs">
-  <button class="tab-btn active" data-tab="cut">✂️ Nova Cut</button>
-  <button class="tab-btn" data-tab="editor" style="display:none;">🎬 Video Editor</button>
-  <button class="tab-btn" data-tab="recap">🎙️ Recap Nova</button>
+<nav class="tabs" role="tablist" aria-label="ဗီဒီယိုလုပ်ဆောင်ချက်များ">
+  <button class="tab-btn active" id="tab-btn-cut" type="button" role="tab" aria-selected="true" aria-controls="tab-cut" data-tab="cut">✂️ Nova Cut</button>
+  <button class="tab-btn" id="tab-btn-editor" type="button" role="tab" aria-selected="false" aria-controls="tab-editor" data-tab="editor" style="display:none;">🎬 Video Editor</button>
+  <button class="tab-btn" id="tab-btn-recap" type="button" role="tab" aria-selected="false" aria-controls="tab-recap" data-tab="recap">🎙️ Recap Nova</button>
 </nav>
 
 <!-- ============ NOVA CUT ============ -->
-<section class="tabpage active" id="tab-cut">
+<section class="tabpage active" id="tab-cut" role="tabpanel" aria-labelledby="tab-btn-cut" aria-hidden="false">
   <div class="card">
-    <h2>✂️ Nova Cut — Video အပိုင်းလိုက် ဖြတ်မယ်</h2>
-    <label>Video file ရွေးပါ</label>
+    <div class="tool-heading">
+      <span class="heading-icon" aria-hidden="true">✂️</span>
+      <div><h2>Nova Cut</h2><p>ဗီဒီယိုကို အပိုင်းတိုများအဖြစ် အရည်အသွေးမလျှော့ဘဲ ဖြတ်ပါ။</p></div>
+    </div>
+    <label for="cutFile">ဖြတ်မယ့် ဗီဒီယိုဖိုင်</label>
     <input type="file" id="cutFile" accept="video/*">
     <div class="fileinfo" id="cutFileInfo"></div>
-    <label>တစ်ပိုင်းကို မိနစ် (ပုံမှန် ၈)</label>
+    <label for="cutMinutes">အပိုင်းတစ်ခုစီရဲ့ ကြာချိန် (မိနစ်)</label>
     <input type="number" id="cutMinutes" value="8" min="1" max="120" step="1">
     <button id="startCut">✂️ ဖြတ်မယ်</button>
     <div class="pbar"><div class="pfill" id="cutProgress"></div></div>
@@ -137,10 +175,13 @@
 </section>
 
 <!-- ============ VIDEO EDITOR ============ -->
-<section class="tabpage" id="tab-editor">
+<section class="tabpage" id="tab-editor" role="tabpanel" aria-labelledby="tab-btn-editor" aria-hidden="true">
   <div class="card">
-    <h2>🎬 Video Editor</h2>
-    <label>Video file ရွေးပါ</label>
+    <div class="tool-heading">
+      <span class="heading-icon" aria-hidden="true">🎬</span>
+      <div><h2>Video Editor</h2><p>Crop, subtitle, watermark နဲ့ blur ကို ပြင်ဆင်ပါ။</p></div>
+    </div>
+    <label for="edFile">ပြင်ဆင်မယ့် ဗီဒီယိုဖိုင်</label>
     <input type="file" id="edFile" accept="video/*">
     <div class="fileinfo" id="edFileInfo"></div>
 
@@ -183,14 +224,22 @@
 </section>
 
 <!-- ============ RECAP NOVA ============ -->
-<section class="tabpage" id="tab-recap">
+<section class="tabpage" id="tab-recap" role="tabpanel" aria-labelledby="tab-btn-recap" aria-hidden="true">
   <div class="card">
-    <h2>🎙️ Recap Nova — Video ကနေ recap video ထုတ်မယ်</h2>
-    <label>Video file ရွေးပါ</label>
+    <div class="tool-heading">
+      <span class="heading-icon" aria-hidden="true">🎙️</span>
+      <div><h2>Recap Nova</h2><p>ဗီဒီယိုမှ ဇာတ်ညွှန်းနဲ့ အသံဖန်တီးပြီး recap ထုတ်ပါ။</p></div>
+    </div>
+    <ol class="workflow-guide" aria-label="Recap ပြုလုပ်ပုံ">
+      <li><span class="workflow-number">၁</span><span>ဗီဒီယိုရွေးပါ</span></li>
+      <li><span class="workflow-number">၂</span><span>အသံနဲ့ပုံစံရွေးပါ</span></li>
+      <li><span class="workflow-number">၃</span><span>ဖန်တီးပြီး ရယူပါ</span></li>
+    </ol>
+    <label for="rcFile">Recap လုပ်မယ့် ဗီဒီယိုဖိုင်</label>
     <input type="file" id="rcFile" accept="video/*">
     <div class="fileinfo" id="rcFileInfo"></div>
     <div>
-      <label>SRT file (optional — sub-translator က ထုတ်ထားတာ)</label>
+      <label for="rcSrtFile">စာတန်းထိုးဖိုင် (.srt) — ရွေးချယ်နိုင်သည်</label>
       <input type="file" id="rcSrtFile" accept=".srt">
       <div class="fileinfo" id="rcSrtInfo"></div>
     </div>
@@ -209,7 +258,7 @@
 
     <div class="row">
       <div>
-        <label>Transcribe ဘာသာစကား</label>
+      <label for="rcLang">အသံမှစာသားပြောင်းမယ့် ဘာသာစကား</label>
         <select id="rcLang">
           <option value="auto">Auto</option>
           <option value="zh">中文 (Chinese)</option>
@@ -218,7 +267,7 @@
         </select>
       </div>
       <div>
-        <label>အသံ (TTS voice)</label>
+          <label for="rcVoice">ဖတ်ပြမယ့် အသံ</label>
         <div style="display:flex;gap:8px;align-items:stretch;">
           <select id="rcVoice" style="flex:1;min-width:0;">
           <option value="my-MM-NilarNeural">👩 Nilar (မိန်းကလေး) — Edge</option>
@@ -235,7 +284,7 @@
 
     <div class="row">
       <div>
-        <label>Narration style</label>
+        <label for="rcStyle">ဇာတ်ညွှန်းပုံစံ</label>
         <select id="rcStyle">
           <option value="story">📖 Story — ဇာတ်လမ်းရှင်း</option>
           <option value="viral">🔥 Viral — hook ဆန်ဆန်</option>
@@ -243,7 +292,7 @@
         </select>
       </div>
       <div>
-        <label>AI ကြည့်ပုံ</label>
+        <label for="rcWatchMode">ဗီဒီယိုကို AI စစ်ဆေးပုံ</label>
         <select id="rcWatchMode">
           <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
           <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
@@ -253,20 +302,23 @@
 
     <div class="row">
       <div>
-        <label>🔄 Video edit (auto)</label>
+        <label>အလိုအလျောက် ဗီဒီယိုပြင်ဆင်မှု</label>
         <div class="chk"><input type="checkbox" id="rcFlip"><span>ဘယ်ညာလှန် (flip)</span></div>
-        <div class="chk"><input type="checkbox" id="rcAudioFirst" checked><span>🎯 Audio-first sync (canvas) — အသံနဲ့ရုပ် ကိုက်</span></div>
+        <div class="chk"><input type="checkbox" id="rcAudioFirst" checked><span>အသံနဲ့ဗီဒီယို ကြာချိန်ကို ကိုက်ညှိမယ်</span></div>
       </div>
       <div>
-        <label>Watermark စာသား</label>
+        <label for="rcWatermark">ဗီဒီယိုပေါ်တင်မယ့် အမှတ်အသားစာသား</label>
         <input type="text" id="rcWatermark" placeholder="sam recap" value="sam recap" style="width:100%;">
       </div>
     </div>
 
+    <details class="advanced-settings">
+      <summary>စာတန်း၊ အမှတ်တံဆိပ်နှင့် အခြားပုံစံများ</summary>
+      <div class="advanced-content">
     <!-- Subtitle style -->
-    <div style="border:1px solid #444;border-radius:8px;padding:12px;margin:12px 0;">
-      <label>📝 Subtitle style</label>
-      <div class="chk"><input type="checkbox" id="rcSubOn" checked><span>Subtitle ပြ (on/off)</span></div>
+    <div class="option-panel">
+      <label>စာလုံးထိုးပုံစံ</label>
+      <div class="chk"><input type="checkbox" id="rcSubOn" checked><span>ဗီဒီယိုပေါ်မှာ စာတန်းပြမယ်</span></div>
       <div class="row">
         <div>
           <label>အရောင်</label>
@@ -281,7 +333,7 @@
           </select>
         </div>
         <div>
-          <label>Font size</label>
+          <label for="rcSubSize">စာလုံးအရွယ်အစား</label>
           <select id="rcSubSize">
             <option value="20">20</option>
             <option value="24">24</option>
@@ -292,7 +344,7 @@
           </select>
         </div>
         <div>
-          <label>Font</label>
+          <label for="rcSubFont">စာလုံးပုံစံ</label>
           <select id="rcSubFont">
             <option value="Aka07" selected>Aka07 (Bold)</option>
             <option value="Aka011">Aka011</option>
@@ -326,22 +378,22 @@
           </select>
         </div>
         <div>
-          <label>စာနေရာ</label>
+          <label for="rcSubPos">စာတန်းနေရာ</label>
           <select id="rcSubPos">
             <option value="onBlur" selected>Blur box ပေါ်</option>
-            <option value="bottom">အောက်</option>
+            <option value="bottom">အောက်ခြေ</option>
           </select>
         </div>
       </div>
       <div>
-        <label>စမ်းကြည့် (စာရိုက် → preview ပေါ်မှာ ပေါ်)</label>
+        <label for="rcSubPreviewText">စာတန်းနမူနာ စမ်းကြည့်ရန်</label>
         <input type="text" id="rcSubPreviewText" placeholder="စမ်းသပ်စာသား ရိုက်ပါ" style="width:100%;">
       </div>
     </div>
 
     <!-- Logo -->
-    <div style="border:1px solid #444;border-radius:8px;padding:12px;margin:12px 0;">
-      <label>🖼️ Logo</label>
+    <div class="option-panel">
+      <label>အမှတ်တံဆိပ် (Logo)</label>
       <div class="row">
         <div>
           <input type="file" id="rcLogoFile" accept="image/*">
@@ -359,9 +411,11 @@
         <img id="rcLogoPrev" style="max-width:100%;display:block;">
       </div>
     </div>
+      </div>
+    </details>
 
-    <button id="startRecap">🎙️ Recap စမယ်</button>
-    <button id="rcSyncOnly" class="ghost" style="display:none;">🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)</button>
+    <button id="startRecap">Recap ဖန်တီးရန်</button>
+    <button id="rcSyncOnly" class="ghost" style="display:none;">ဗီဒီယိုနဲ့အသံ ပြန်ညှိရန်</button>
     <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
     <div class="plabel" id="rcProgressLabel"></div>
 
@@ -373,9 +427,9 @@
       <li data-step="mux">5️⃣ Video နဲ့ တွဲမယ် + SRT ထုတ်မယ်</li>
     </ol>
 
-    <label>Transcript (စစ်ကြည့်ရန်)</label>
+    <label for="rcTranscript">အသိအမှတ်ပြုထားတဲ့ စာသား</label>
     <textarea id="rcTranscript" readonly placeholder="transcribe ပြီးရင် ဒီမှာ ပေါ်မယ်…"></textarea>
-    <label>Recap script (segments)</label>
+    <label for="rcScript">Recap အသံဖတ်မယ့် ဇာတ်ညွှန်း</label>
     <textarea id="rcScript" readonly placeholder="script ရရင် ဒီမှာ ပေါ်မယ်…"></textarea>
 
     <div class="results" id="rcResults"></div>
@@ -383,6 +437,7 @@
     <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က ဘယ် server မှမတက်ဘူး။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
   </div>
 </section>
+ </main>
 
 <script>
 window.__errs = [];
@@ -400,6 +455,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261016e"></script>
+<script type="module" src="app-v3.js?v=20261016f"></script>
 </body>
 </html>
