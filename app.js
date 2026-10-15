@@ -1,6 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015a";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015a";
+import { canvasExport } from "./js/canvas-export.js?v=20261015a";
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -504,6 +505,58 @@ $("startEdit").addEventListener("click", async () => {
   }
 });
 
+$("canvasExportBtn").addEventListener("click", async () => {
+  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  setBusy(["startEdit", "canvasExportBtn", "extractAudio"], true);
+  $("edResults").innerHTML = "";
+  try {
+    log("ed", "📹 Canvas နဲ့ export လုပ်နေပါတယ်… (real-time)");
+    const flip = $("flipChk").checked;
+    const wm = $("wmText").value.trim();
+    // Subtitles if SRT loaded
+    let subs = [];
+    if (edSrt) {
+      const txt = await edSrt.text();
+      subs = parseSRT(txt);
+    }
+    setProgressHandler((p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"));
+    const { blob, ext } = await canvasExport(edFile, {
+      flip, watermarkText: wm, subtitles: subs,
+      width: 720, height: 1280,
+      onprog: (p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"),
+    });
+    const baseName = edFileName.replace(/\.[^.]+$/, "");
+    const { row } = dlRow(baseName + "_canvas." + ext, blob);
+    $("edResults").appendChild(row);
+    setProgress("ed", 100, "ပြီးပါပြီ ✅");
+    log("ed", "Canvas export ရပါပြီ ✅ (" + ext.toUpperCase() + ")", "ok");
+  } catch (e) {
+    log("ed", "အမှား: " + (e.message || e), "err");
+    setProgress("ed", 0, "");
+  } finally {
+    setProgressHandler(null);
+    setBusy(["startEdit", "canvasExportBtn", "extractAudio"], false);
+  }
+});
+
+function parseSRT(txt) {
+  const out = [];
+  const blocks = String(txt).split(/\n\s*\n/);
+  for (const b of blocks) {
+    const lines = b.trim().split("\n");
+    if (lines.length < 2) continue;
+    const m = lines[1].match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)/);
+    if (!m) continue;
+    const t = (h, m2, s, ms) => (+h) * 3600 + (+m2) * 60 + (+s) + (+ms) / 1000;
+    out.push({
+      start: t(m[1], m[2], m[3], m[4]),
+      end: t(m[5], m[6], m[7], m[8]),
+      text: lines.slice(2).join(" "),
+    });
+  }
+  return out;
+}
+
 $("extractAudio").addEventListener("click", async () => {
   if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
   setBusy(["startEdit", "extractAudio"], true);
@@ -640,6 +693,32 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     const r1 = dlRow(baseName + "_recap.mp4", vblob); $("rcResults").appendChild(r1.row);
     const r2 = dlRow(baseName + "_recap.srt", srtBlob); $("rcResults").appendChild(r2.row);
     const r3 = dlRow(baseName + "_script.txt", txtBlob); $("rcResults").appendChild(r3.row);
+
+    // Auto-apply selected edits via canvas (unified flow — no separate editor tab)
+    const wantFlip = $("rcFlip") && $("rcFlip").checked;
+    const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+    if (wantFlip || wantWm) {
+      try {
+        setProgress("rc", 97, "Edit တွေ လုပ်နေပါတယ် (canvas)…");
+        log("rc", "🎨 flip/watermark canvas နဲ့ လုပ်နေပါတယ်…");
+        // Parse SRT for subtitle burn-in
+        const subs = [];
+        const srtLines = srt.split("\n");
+        // (subtitles already in srt string; parse quickly)
+        const { blob: editedBlob, ext } = await canvasExport(vblob, {
+          flip: wantFlip,
+          watermarkText: wantWm,
+          subtitles: [], // SRT already muxed? No — burn via canvas if needed
+          width: 720, height: 1280,
+          onprog: (p) => setProgress("rc", 97 + p * 2, "Edit… " + Math.round(p * 100) + "%"),
+        });
+        const r4 = dlRow(baseName + "_recap_edited." + ext, editedBlob);
+        $("rcResults").appendChild(r4.row);
+        log("rc", "Edit ပြီးပါပြီ ✅", "ok");
+      } catch (e) {
+        log("rc", "Edit မအောင်မြင်ပါ: " + (e.message || e) + " — မူရင်း video ကို သုံးပါ", "err");
+      }
+    }
 
     rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
     const handBtn = document.createElement("button");
