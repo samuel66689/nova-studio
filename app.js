@@ -4,6 +4,7 @@ import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
+  geminiUploadVideo, geminiRecapFromVideoFile,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
 } from "./js/api.js?v=20261015d";
@@ -831,24 +832,44 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", `transcript ရပါပြီ (${allSegs.length} ကြောင်း) ✅`, "ok");
     setStep("transcribe", "done");
 
-    // ---- step 3: recap script (vision — AI watches the scenes) ----
+    // ---- step 3: recap script ----
     setStep("script", "run");
+    const rcStyle = ($("rcStyle") || {}).value || "story";
+    const watchMode = ($("rcWatchMode") || {}).value || "frames";
     let segments = null;
-    try {
-      setProgress("rc", 52, "Scene frames ထုတ်နေပါတယ်…");
-      log("rc", "3️⃣ AI က scene တွေကြည့်နေပါတယ်… 🎬");
-      const frames = await extractSceneFrames(rcFile, 24, (i, n) =>
-        setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene ထုတ်နေပါတယ်… (${i}/${n})`));
-      if (frames.length >= 4) {
-        setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
-        log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
-        segments = await geminiRecapScriptVision(frames, transcriptText);
-        log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
-      } else {
-        log("rc", "scene ထုတ်မရပါ — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…", "err");
+    if (watchMode === "fullvideo") {
+      // Full video via Gemini Files API — AI watches the entire video
+      try {
+        setProgress("rc", 52, "Video တင်နေပါတယ် (Gemini)…");
+        log("rc", "3️⃣ Video အပြည့်တင်ပြီး AI ကြည့်နေပါတယ်… 🎬");
+        const fileUri = await geminiUploadVideo(rcFile, (i) =>
+          setProgress("rc", 52 + Math.min(i, 10), `video process စောင့်နေပါတယ်…`));
+        setProgress("rc", 62, "AI က video ကြည့်ပြီး script ရေးနေပါတယ်…");
+        log("rc", `🎬 video အပြည့် + style (${rcStyle}) နဲ့ script ရေးနေပါတယ်…`);
+        segments = await geminiRecapFromVideoFile(fileUri, rcStyle);
+        log("rc", `video-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
+      } catch (e) {
+        log("rc", `full video မအောင်မြင်ပါ (${e.message}) — frames နဲ့ ဆက်လုပ်ပါမယ်…`, "err");
       }
-    } catch (e) {
-      log("rc", `scene script မအောင်မြင်ပါ (${e.message}) — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…`, "err");
+    }
+    if (!segments || !segments.length) {
+      // Frames mode (or fullvideo fallback)
+      try {
+        setProgress("rc", 52, "Scene frames ထုတ်နေပါတယ်…");
+        log("rc", "3️⃣ AI က scene တွေကြည့်နေပါတယ်… 🎬");
+        const frames = await extractSceneFrames(rcFile, 40, (i, n) =>
+          setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene ထုတ်နေပါတယ်… (${i}/${n})`));
+        if (frames.length >= 4) {
+          setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
+          log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
+          segments = await geminiRecapScriptVision(frames, transcriptText);
+          log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
+        } else {
+          log("rc", "scene ထုတ်မရပါ — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…", "err");
+        }
+      } catch (e) {
+        log("rc", `scene script မအောင်မြင်ပါ (${e.message}) — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…`, "err");
+      }
     }
     if (!segments || !segments.length) {
       setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
