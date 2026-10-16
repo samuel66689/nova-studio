@@ -68,6 +68,29 @@ import {
 const $ = (id) => document.getElementById(id);
 const now = () => new Date().toLocaleTimeString("en-GB", { hour12: false });
 
+/** Copy log text to clipboard */
+function copyLog(lid) {
+  const box = document.getElementById(lid);
+  if (!box) return;
+  const text = box.innerText || "";
+  if (!text.trim()) { alert("Log ဗလာ ပါ"); return; }
+  const done = () => alert("📋 Copy ပြီးပြီ (" + text.split("\n").length + " ကြောင်း)");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0;";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); }
+  catch (_) { alert("Copy မရပါ — စာကို ဖိပြီး ရွေးပါ"); }
+  document.body.removeChild(ta);
+}
+window.copyLog = copyLog;
+
 function log(tab, msg, cls) {
   const box = $(tab + "Log");
   const line = document.createElement("div");
