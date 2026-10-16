@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017q";
+} from "./js/api.js?v=20261017r";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1259,8 +1259,9 @@ function seriesPromptExtra() {
   let extra = "";
   // Only use memories from parts STRICTLY EARLIER than current part
   // Part 1 gets no prior context; reruns don't see own/later memories
-  const mem = s.isEnd ? getMemory(s.title) : getMemoryBefore(s.title, s.part);
-  if (mem && !s.isEnd) {
+  // End gets all numbered parts (excludes obsolete End block); others get strictly earlier parts
+  const mem = getMemoryBefore(s.title, s.isEnd ? "End" : s.part);
+  if (mem) {
     extra += `\n\nSTORY MEMORY (previous parts of "${s.title}"): \n${mem}\n` +
       `Use the SAME character names and continue the story consistently.`;
   }
