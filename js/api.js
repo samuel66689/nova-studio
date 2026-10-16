@@ -309,8 +309,9 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="") {
       const j = await res.json();
       const text = ((j.candidates || [])[0] || {}).content?.parts
         ?.map((p) => p.text || "").join("") || "";
-      const segs = parseRecapSegments(text);
-      if (!segs.length) throw new Error("script format မမှန်ပါ");
+      const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
+      if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
+      if (!segs.length) throw new Error("script format မမှန်ပါ — segment မရှိပါ");
       return segs;
     } catch (e) {
       lastErr = e;
@@ -432,8 +433,9 @@ export async function geminiRecapScriptVision(frames, transcriptText, extraPromp
       parts.push({ text: "AUDIO TRANSCRIPT (with timestamps):\n" + transcriptText +
         "\n\nNow watch the scenes above in story order and write the recap narration." + extraPrompt });
       const text = await geminiGenerateParts(m, RECAP_VISION_SYSTEM, parts, 8192);
-      const segs = parseRecapSegments(text);
-      if (!segs.length) throw new Error("script format မမှန်ပါ");
+      const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
+      if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
+      if (!segs.length) throw new Error("script format မမှန်ပါ — segment မရှိပါ");
       return segs;
     } catch (e) {
       lastErr = e;
@@ -495,8 +497,9 @@ export async function geminiRecapScript(transcriptText, extraPrompt="") {
         m, RECAP_SYSTEM,
         "Write the recap narration for this transcript:\n\n" + transcriptText + extraPrompt
       );
-      const segs = parseRecapSegments(text);
-      if (!segs.length) throw new Error("script format မမှန်ပါ");
+      const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
+      if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
+      if (!segs.length) throw new Error("script format မမှန်ပါ — segment မရှိပါ");
       return segs;
     } catch (e) {
       lastErr = e;
