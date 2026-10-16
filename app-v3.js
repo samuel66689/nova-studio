@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016n";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017a";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -27,6 +27,8 @@ document.addEventListener("DOMContentLoaded", () => {
     $("rcSeriesBox").style.display = e.target.checked ? "block" : "none";
     if (e.target.checked) refreshSeriesDropdown();
   });
+  // Refresh series dropdown on load (in case memories exist)
+  try { refreshSeriesDropdown(); } catch (_) {}
   $("rcSeriesTitleSel")?.addEventListener("change", (e) => {
     if (e.target.value) $("rcSeriesTitle").value = e.target.value;
   });
@@ -59,8 +61,8 @@ import {
   idbSet, idbGet, idbDel,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-  geminiText, extractStoryMemory,
-} from "./js/api.js?v=20261016n";
+  geminiText, extractStoryMemory, validateRecapSegments,
+} from "./js/api.js?v=20261017a";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1132,8 +1134,10 @@ function seriesPromptExtra() {
       `If the story is complete, write something like "ဒီဇာတ်လမ်း ဒီမှာ ပြီးစီးပါပြီ". ` +
       `If the story continues (next season), predict what might happen next and add an exciting hook like "နောက် Season မှာ ဘာ ဖြစ် မလဲ? စောင့်ကြည့်ပါ".`;
   }
-  return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part}. ` +
-    `Mention the part number naturally in your recap opening if appropriate.`;
+  return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part} (MIDDLE part, NOT the end). ` +
+    `Mention the part number naturally in your recap opening if appropriate. ` +
+    `IMPORTANT: Do NOT add any "wait for next part" or teaser hook at the end. ` +
+    `End naturally when this part's story ends.`;
 }
 
 /** Wake Lock: keep screen on during recording */
@@ -1192,8 +1196,22 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return { start: s.start, end: s.end, text: s.text, audioBlob };
+        return {
+          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+          start: s.start, end: s.end,  // deprecated alias
+          text: s.text, audioBlob,
+          audioDuration: s.audioDuration,
+        };
       });
+      // PHASE 1: Validate timestamps before export
+      {
+        const v = validateRecapSegments(segsWithAudio);
+        if (!v.ok) {
+          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+          log("rc", msg, "err");
+          throw new Error(msg);
+        }
+      }
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
@@ -1221,8 +1239,22 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return { start: s.start, end: s.end, text: s.text, audioBlob };
+        return {
+          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+          start: s.start, end: s.end,  // deprecated alias
+          text: s.text, audioBlob,
+          audioDuration: s.audioDuration,
+        };
       });
+      // PHASE 1: Validate timestamps before export
+      {
+        const v = validateRecapSegments(segsWithAudio);
+        if (!v.ok) {
+          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+          log("rc", msg, "err");
+          throw new Error(msg);
+        }
+      }
       let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
@@ -1282,20 +1314,6 @@ $("rcFile").addEventListener("change", async (e) => {
       if (sbAuto) sbAuto.style.display = "";
       if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
       if (saved.script) { try { $("rcScript").value = saved.script; } catch (_) {} }
-    // Auto-save story memory if series ON
-    try {
-      const si = getSeriesInfo();
-      if (si && !si.isEnd && segments && segments.length) {
-        log("rc", "📓 Memory ထုတ် နေ ပါ တယ်…");
-        const mem = await extractStoryMemory(segments);
-        if (mem) {
-          const prev = getMemory(si.title);
-          saveMemory(si.title, (prev ? prev + "\n\n" : "") + `[Part ${si.part}]\n` + mem);
-          log("rc", "📓 Memory သိမ်း ပြီးပါ ပြီ ✅", "ok");
-          refreshSeriesDropdown();
-        }
-      }
-    } catch (_) {}
       const bar = document.createElement("div");
       bar.style.cssText = "background:#1a3a2a;border:1px solid #4caf50;border-radius:8px;padding:12px;margin:8px 0;";
       bar.innerHTML = `<div>💾 <b>သိမ်းထားတာ ရှိတယ်</b> (${saved.segments.length} segments, ${new Date(saved.savedAt).toLocaleString()})</div>
@@ -1580,9 +1598,26 @@ $("startRecap").addEventListener("click", async () => {
       segments = await geminiRecapScript(transcriptText, seriesPromptExtra());
     }
     $("rcScript").value = segments.map((s) =>
-      `[${fmtClock(s.start)}-${fmtClock(s.end)}] ${s.text}`).join("\n");
+      `[${fmtClock(s.outputStart ?? s.start)}-${fmtClock(s.outputEnd ?? s.end)}] ${s.text}`).join("\n");
     log("rc", `script ရပါပြီ (${segments.length} segments) ✅`, "ok");
     setStep("script", "done");
+    // Auto-save story memory if series ON (Phase 1)
+    try {
+      const si = getSeriesInfo();
+      if (si && !si.isEnd && segments && segments.length) {
+        log("rc", "📓 Memory ထုတ် နေ ပါ တယ်…");
+        extractStoryMemory(segments).then((mem) => {
+          if (mem) {
+            const prev = getMemory(si.title);
+            saveMemory(si.title, (prev ? prev + "\n\n" : "") + `[Part ${si.part}]\n` + mem);
+            log("rc", "📓 Memory သိမ်း ပြီးပါ ပြီ ✅", "ok");
+            refreshSeriesDropdown();
+          } else {
+            log("rc", "📓 Memory ထုတ် မ ရ ပါ", "err");
+          }
+        }).catch((e) => log("rc", "📓 Memory error: " + (e.message || e), "err"));
+      }
+    } catch (e) { log("rc", "📓 Memory error: " + (e.message || e), "err"); }
 
     // ---- step 4: TTS per segment ----
     setStep("tts", "run");
@@ -1690,8 +1725,22 @@ $("startRecap").addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return { start: s.start, end: s.end, text: s.text, audioBlob };
+        return {
+          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+          start: s.start, end: s.end,  // deprecated alias
+          text: s.text, audioBlob,
+          audioDuration: s.audioDuration,
+        };
       });
+      // PHASE 1: Validate timestamps before export
+      {
+        const v = validateRecapSegments(segsWithAudio);
+        if (!v.ok) {
+          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+          log("rc", msg, "err");
+          throw new Error(msg);
+        }
+      }
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
@@ -1723,8 +1772,22 @@ $("startRecap").addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return { start: s.start, end: s.end, text: s.text, audioBlob };
+        return {
+          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+          start: s.start, end: s.end,  // deprecated alias
+          text: s.text, audioBlob,
+          audioDuration: s.audioDuration,
+        };
       });
+      // PHASE 1: Validate timestamps before export
+      {
+        const v = validateRecapSegments(segsWithAudio);
+        if (!v.ok) {
+          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+          log("rc", msg, "err");
+          throw new Error(msg);
+        }
+      }
       let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip,
         watermarkText: wantWm,
