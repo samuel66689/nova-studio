@@ -60,9 +60,9 @@ import {
   geminiUploadVideo, geminiRecapFromVideoFile,
   idbSet, idbGet, idbDel,
   extractSceneFrames,
-  segmentsToSRT, mediaDuration, fmtClock, pad2,
+  segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017k";
+} from "./js/api.js?v=20261017n";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -90,6 +90,30 @@ function fallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 window.copyLog = copyLog;
+
+/**
+ * Generate SRT from segments with audio blobs.
+ * Measures actual audio durations and builds cumulative output timeline.
+ * Throws with clear error if timestamps are invalid.
+ */
+async function srtFromSegsWithAudio(segsWithAudio, logTab) {
+  const withDur = [];
+  for (let i = 0; i < segsWithAudio.length; i++) {
+    const s = segsWithAudio[i];
+    let dur = 0;
+    if (s.audioBlob) {
+      try { dur = await mediaDuration(s.audioBlob); } catch (_) { dur = 0; }
+    }
+    // Fallback to existing audioDur/audioDuration if measurement fails
+    if (!(dur > 0)) {
+      dur = (typeof s.audioDur === "number" && s.audioDur > 0) ? s.audioDur
+          : (typeof s.audioDuration === "number" && s.audioDuration > 0 ? s.audioDuration : 0);
+    }
+    withDur.push({ ...s, audioDur: dur });
+  }
+  const timed = buildOutputTimeline(withDur);
+  return segmentsToSRT(timed);
+}
 
 function log(tab, msg, cls) {
   const box = $(tab + "Log");
@@ -1255,7 +1279,12 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      const srt = segmentsToSRT(segments);
+      let srt = "";
+      try { srt = segmentsToSRT(segments); }
+      catch (e) {
+        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+        srt = "SRT generation failed: " + e.message + "\n";
+      }
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
@@ -1306,7 +1335,12 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       });
       // Fix WebM duration metadata (for CapCut/editors)
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      const srt = segmentsToSRT(segments);
+      let srt = "";
+      try { srt = segmentsToSRT(segments); }
+      catch (e) {
+        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+        srt = "SRT generation failed: " + e.message + "\n";
+      }
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
@@ -1677,6 +1711,17 @@ $("startRecap").addEventListener("click", async () => {
       return `[${fa}-${fb}] ${s.text}`;
     }).join("\n");
     log("rc", `script ရပါပြီ (${segments.length} segments) ✅`, "ok");
+    // PRIORITY 1: Validate BEFORE TTS to avoid wasting API credits
+    {
+      const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+      const v = validateRecapSegments(segments, { sourceDuration: srcDur });
+      if (!v.ok) {
+        const msg = "Script အမှား (TTS မလုပ်ခင်):\n" + v.errors.slice(0, 5).join("\n");
+        log("rc", msg, "err");
+        throw new Error(msg);
+      }
+      log("rc", "✅ Script validation အောင်မြင်ပါပြီ", "ok");
+    }
     setStep("script", "done");
     // Auto-save story memory if series ON (Phase 1)
     try {
@@ -1832,7 +1877,12 @@ $("startRecap").addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      const srt = segmentsToSRT(segments);
+      let srt = "";
+      try { srt = segmentsToSRT(segments); }
+      catch (e) {
+        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+        srt = "SRT generation failed: " + e.message + "\n";
+      }
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
@@ -1889,7 +1939,12 @@ $("startRecap").addEventListener("click", async () => {
       });
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
       // SRT + script files
-      const srt = segmentsToSRT(segments);
+      let srt = "";
+      try { srt = segmentsToSRT(segments); }
+      catch (e) {
+        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+        srt = "SRT generation failed: " + e.message + "\n";
+      }
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
