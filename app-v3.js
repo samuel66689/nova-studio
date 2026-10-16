@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017b";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017c";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017b";
+} from "./js/api.js?v=20261017c";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1196,12 +1196,16 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return {
+        const out = {
           outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
           start: s.start, end: s.end,  // deprecated alias
           text: s.text, audioBlob,
           audioDuration: s.audioDuration,
         };
+        // Preserve genuine source timestamps only — never invent them
+        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+        return out;
       });
       // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
       // but ONLY applies to genuine sourceStart/sourceEnd fields — output
@@ -1242,12 +1246,16 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return {
+        const out = {
           outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
           start: s.start, end: s.end,  // deprecated alias
           text: s.text, audioBlob,
           audioDuration: s.audioDuration,
         };
+        // Preserve genuine source timestamps only — never invent them
+        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+        return out;
       });
       // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
       // but ONLY applies to genuine sourceStart/sourceEnd fields — output
@@ -1731,12 +1739,16 @@ $("startRecap").addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return {
+        const out = {
           outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
           start: s.start, end: s.end,  // deprecated alias
           text: s.text, audioBlob,
           audioDuration: s.audioDuration,
         };
+        // Preserve genuine source timestamps only — never invent them
+        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+        return out;
       });
       // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
       // but ONLY applies to genuine sourceStart/sourceEnd fields — output
@@ -1781,12 +1793,16 @@ $("startRecap").addEventListener("click", async () => {
       const segsWithAudio = segments.map((s, i) => {
         const pieces = segPieces[s._i] || segPieces[i] || [];
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        return {
+        const out = {
           outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
           start: s.start, end: s.end,  // deprecated alias
           text: s.text, audioBlob,
           audioDuration: s.audioDuration,
         };
+        // Preserve genuine source timestamps only — never invent them
+        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+        return out;
       });
       // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
       // but ONLY applies to genuine sourceStart/sourceEnd fields — output
