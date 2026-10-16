@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017d";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017e";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017d";
+} from "./js/api.js?v=20261017e";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1134,10 +1134,13 @@ function seriesPromptExtra() {
       `If the story is complete, write something like "ဒီဇာတ်လမ်း ဒီမှာ ပြီးစီးပါပြီ". ` +
       `If the story continues (next season), predict what might happen next and add an exciting hook like "နောက် Season မှာ ဘာ ဖြစ် မလဲ? စောင့်ကြည့်ပါ".`;
   }
-  return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part} (MIDDLE part, NOT the end). ` +
-    `Mention the part number naturally in your recap opening if appropriate. ` +
-    `IMPORTANT: Do NOT add any "wait for next part" or teaser hook at the end. ` +
-    `End naturally when this part's story ends.`;
+  return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part} (continuation, NOT the end). ` +
+    `STRICT RULES for continuation:` +
+    `\n1. NEVER start with meta-intros like "ဒုတိယပိုင်းမှာ", "အပိုင်း ${s.part} မှာ", "အရင်အပိုင်းမှာ", "In Part ${s.part}".` +
+    `\n2. NEVER greet, summarize previous parts, or announce "this is part X".` +
+    `\n3. Start DIRECTLY with the next story event, action, or dialogue — as if the story never paused.` +
+    `\n4. Do NOT repeat Part 1 content unless one brief detail is essential.` +
+    `\n5. Do NOT add "wait for next part" hook at the end. End naturally.`;
 }
 
 /** Wake Lock: keep screen on during recording */
@@ -1581,7 +1584,11 @@ $("startRecap").addEventListener("click", async () => {
           setProgress("rc", 52 + Math.min(i, 10), `video process စောင့်နေပါတယ်…`));
         setProgress("rc", 62, "AI က video ကြည့်ပြီး script ရေးနေပါတယ်…");
         log("rc", `🎬 video အပြည့် + style (${rcStyle}) နဲ့ script ရေးနေပါတယ်…`);
-        segments = await geminiRecapFromVideoFile(fileUri, rcStyle, seriesPromptExtra());
+        {
+        const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+        const tgtMin = Math.max(1, Math.round(srcMin * 0.5));
+        segments = await geminiRecapFromVideoFile(fileUri, rcStyle, seriesPromptExtra(), { targetMinutes: tgtMin });
+      }
         log("rc", `video-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
       } catch (e) {
         log("rc", `full video မအောင်မြင်ပါ (${e.message}) — frames နဲ့ ဆက်လုပ်ပါမယ်…`, "err");
@@ -1597,7 +1604,11 @@ $("startRecap").addEventListener("click", async () => {
         if (frames.length >= 4) {
           setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
           log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
-          segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra());
+          {
+          const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+          const tgtMin = Math.max(1, Math.round(srcMin * 0.5));
+          segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
+        }
           log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
         } else {
           log("rc", "scene ထုတ်မရပါ — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…", "err");
@@ -1609,7 +1620,12 @@ $("startRecap").addEventListener("click", async () => {
     if (!segments || !segments.length) {
       setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
       log("rc", "3️⃣ Gemini က recap script ရေးနေပါတယ်…");
-      segments = await geminiRecapScript(transcriptText, seriesPromptExtra());
+      {
+        const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+        const tgtMin = Math.max(1, Math.round(srcMin * 0.5));
+        log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်ရဲ့ တဝက်)`);
+        segments = await geminiRecapScript(transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
+      }
     }
     $("rcScript").value = segments.map((s) =>
       `[${fmtClock(s.outputStart ?? s.start)}-${fmtClock(s.outputEnd ?? s.end)}] ${s.text}`).join("\n");
