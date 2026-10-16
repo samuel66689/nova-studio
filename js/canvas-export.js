@@ -633,27 +633,40 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     // Only seek when a genuine sourceStart exists. Otherwise continue from
     // current position — the output timestamp is narration timing, not a
     // source-video position. (Phase 3 will add proper scene matching.)
-    // Issue 1 fix: Only wait for seek when actually seeking.
+    // Seek: register listener BEFORE setting currentTime (avoid race).
     const hasSrc = typeof s.sourceStart === "number" && isFinite(s.sourceStart) && s.sourceStart >= 0;
     if (hasSrc) {
-      video.currentTime = s.sourceStart;
-      // Wait for seeked with timeout, cleanup on all paths
-      await new Promise((res) => {
-        let done = false;
-        const finish = () => { if (!done) { done = true; video.removeEventListener("seeked", h); clearTimeout(to); res(); } };
-        const h = () => finish();
-        const to = setTimeout(() => {
-          try { console.warn(`[seek] seg ${i}: seek timeout after 3s`); } catch (_) {}
-          finish();
-        }, 3000);
-        video.addEventListener("seeked", h);
-        // If already at target (no seek needed), resolve immediately
-        setTimeout(() => {
-          if (Math.abs(video.currentTime - s.sourceStart) < 0.3) finish();
-        }, 100);
-      });
+      const target = s.sourceStart;
+      // Already at target? No seek needed — continue immediately.
+      if (Math.abs(video.currentTime - target) < 0.3) {
+        try { console.log(`[seek] seg ${i}: already at ${target.toFixed(1)}s`); } catch (_) {}
+      } else {
+        await new Promise((res) => {
+          let done = false;
+          let to = null;
+          const cleanup = () => {
+            video.removeEventListener("seeked", onSeeked);
+            if (to) clearTimeout(to);
+          };
+          const finish = () => { if (!done) { done = true; cleanup(); res(); } };
+          const onSeeked = () => finish();
+          // 1. Register listener FIRST
+          video.addEventListener("seeked", onSeeked);
+          // 2. Register timeout
+          to = setTimeout(() => {
+            try { console.warn(`[seek] seg ${i}: timeout after 3s (target ${target.toFixed(1)}s)`); } catch (_) {}
+            finish();
+          }, 3000);
+          // 3. THEN initiate seek
+          try { video.currentTime = target; }
+          catch (e) {
+            try { console.warn(`[seek] seg ${i}: seek error: ${e.message}`); } catch (_) {}
+            finish();
+          }
+        });
+      }
     } else {
-      // No source timestamp: continue from current position, NO wait.
+      // Legacy: no source timestamp — continue immediately, no wait.
       try {
         console.warn(`[seek] seg ${i}: no sourceStart — continuing from ${video.currentTime.toFixed(1)}s`);
       } catch (_) {}
@@ -675,14 +688,18 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     let pauseWarned = false;
     const srcEnd = (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) ? s.sourceEnd : null;
     const srcStart = (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) ? s.sourceStart : null;
+    let loopCount = 0;
     await new Promise((res) => {
       const check = () => {
         const el = (performance.now() - t0) / 1000;
-        // Issue 2: Enforce sourceEnd — do not drift into unrelated scenes.
+        // Enforce sourceEnd — do not drift into unrelated scenes.
         // If video reaches sourceEnd but audio continues, loop back to sourceStart.
-        if (srcEnd !== null && srcStart !== null && video.currentTime >= srcEnd - 0.1) {
+        // Safety: max 20 loops to avoid infinite loop on bad timestamps.
+        if (srcEnd !== null && srcStart !== null && loopCount < 20 &&
+            video.currentTime >= srcEnd - 0.1 && !video.paused) {
+          loopCount++;
           try { video.currentTime = srcStart; } catch (_) {}
-          try { console.log(`[src-bound] seg ${i}: looped to ${srcStart.toFixed(1)}s`); } catch (_) {}
+          try { console.log(`[src-bound] seg ${i}: loop ${loopCount} to ${srcStart.toFixed(1)}s`); } catch (_) {}
         }
         // Detect unexpected pause (Chrome background tab)
         if (video.paused && !video.ended && el < playTime) {
