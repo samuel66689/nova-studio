@@ -633,20 +633,31 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     // Only seek when a genuine sourceStart exists. Otherwise continue from
     // current position — the output timestamp is narration timing, not a
     // source-video position. (Phase 3 will add proper scene matching.)
-    if (typeof s.sourceStart === "number" && isFinite(s.sourceStart) && s.sourceStart >= 0) {
+    // Issue 1 fix: Only wait for seek when actually seeking.
+    const hasSrc = typeof s.sourceStart === "number" && isFinite(s.sourceStart) && s.sourceStart >= 0;
+    if (hasSrc) {
       video.currentTime = s.sourceStart;
+      // Wait for seeked with timeout, cleanup on all paths
+      await new Promise((res) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; video.removeEventListener("seeked", h); clearTimeout(to); res(); } };
+        const h = () => finish();
+        const to = setTimeout(() => {
+          try { console.warn(`[seek] seg ${i}: seek timeout after 3s`); } catch (_) {}
+          finish();
+        }, 3000);
+        video.addEventListener("seeked", h);
+        // If already at target (no seek needed), resolve immediately
+        setTimeout(() => {
+          if (Math.abs(video.currentTime - s.sourceStart) < 0.3) finish();
+        }, 100);
+      });
     } else {
-      // No source timestamp: keep playing from current position.
-      // First segment starts at 0 (video freshly loaded).
+      // No source timestamp: continue from current position, NO wait.
       try {
-        console.warn(`[Phase1] seg ${i}: no sourceStart — continuing from ${video.currentTime.toFixed(1)}s (NOT seeking to output ${s.start}s)`);
+        console.warn(`[seek] seg ${i}: no sourceStart — continuing from ${video.currentTime.toFixed(1)}s`);
       } catch (_) {}
     }
-    await new Promise((res) => {
-      const h = () => { video.removeEventListener("seeked", h); res(); };
-      video.addEventListener("seeked", h);
-      setTimeout(res, 3000);
-    });
 
     // Play audio
     const audioDone = new Promise((res) => {
@@ -662,9 +673,17 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     }
     const t0 = performance.now();
     let pauseWarned = false;
+    const srcEnd = (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) ? s.sourceEnd : null;
+    const srcStart = (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) ? s.sourceStart : null;
     await new Promise((res) => {
       const check = () => {
         const el = (performance.now() - t0) / 1000;
+        // Issue 2: Enforce sourceEnd — do not drift into unrelated scenes.
+        // If video reaches sourceEnd but audio continues, loop back to sourceStart.
+        if (srcEnd !== null && srcStart !== null && video.currentTime >= srcEnd - 0.1) {
+          try { video.currentTime = srcStart; } catch (_) {}
+          try { console.log(`[src-bound] seg ${i}: looped to ${srcStart.toFixed(1)}s`); } catch (_) {}
+        }
         // Detect unexpected pause (Chrome background tab)
         if (video.paused && !video.ended && el < playTime) {
           if (!pauseWarned) {
