@@ -3,16 +3,19 @@
 export function getKeys() {
   return {
     groq: (localStorage.getItem("nova_groq_key") || "").trim(),
+    aai: (localStorage.getItem("nova_aai_key") || "").trim(),
     gemini: (localStorage.getItem("nova_gemini_key") || "").trim(),
   };
 }
-export function saveKeys(groq, gemini) {
+export function saveKeys(groq, gemini, aai) {
   localStorage.setItem("nova_groq_key", (groq || "").trim());
   localStorage.setItem("nova_gemini_key", (gemini || "").trim());
+  if (aai !== undefined) localStorage.setItem("nova_aai_key", (aai || "").trim());
 }
 export function clearKeys() {
   localStorage.removeItem("nova_groq_key");
   localStorage.removeItem("nova_gemini_key");
+  localStorage.removeItem("nova_aai_key");
 }
 
 // ---------- time helpers ----------
@@ -492,6 +495,52 @@ export async function geminiRecapScript(transcriptText) {
     }
   }
   throw lastErr;
+}
+
+
+/** Assembly AI transcribe (browser direct) */
+export async function aaiTranscribe(audioBlob, apiKey) {
+  if (!apiKey) throw new Error("Assembly AI key မရှိပါ");
+  const H = { authorization: apiKey };
+  // 1. Upload
+  const up = await fetch("https://api.assemblyai.com/v2/upload", {
+    method: "POST", headers: H, body: audioBlob,
+  });
+  if (!up.ok) throw new Error("AssemblyAI upload failed: " + up.status);
+  const { upload_url } = await up.json();
+  // 2. Request transcript
+  const tr = await fetch("https://api.assemblyai.com/v2/transcript", {
+    method: "POST",
+    headers: { ...H, "content-type": "application/json" },
+    body: JSON.stringify({ audio_url: upload_url, language_detection: true }),
+  });
+  if (!tr.ok) throw new Error("AssemblyAI transcript failed: " + tr.status);
+  const { id } = await tr.json();
+  // 3. Poll
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const st = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, { headers: H });
+    const j = await st.json();
+    if (j.status === "completed") {
+      const words = j.words || [];
+      // Group words into segments (max 8s or 25 words)
+      const segs = [];
+      let cur = null;
+      for (const w of words) {
+        const s = w.start / 1000, e = w.end / 1000;
+        if (!cur || s - cur.end > 0.7 || cur.words.length >= 25 || e - cur.start > 8) {
+          if (cur) segs.push({ start: cur.start, end: cur.end, text: cur.words.join(" ") });
+          cur = { start: s, end: e, words: [w.text] };
+        } else {
+          cur.end = e; cur.words.push(w.text);
+        }
+      }
+      if (cur) segs.push({ start: cur.start, end: cur.end, text: cur.words.join(" ") });
+      return segs;
+    }
+    if (j.status === "error") throw new Error("AssemblyAI: " + (j.error || "failed"));
+  }
+  throw new Error("AssemblyAI timeout");
 }
 
 export function parseRecapSegments(text) {
