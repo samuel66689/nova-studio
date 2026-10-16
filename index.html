@@ -289,10 +289,12 @@ button.ghost:active { border-color: var(--acc); }
 }
 .log-wrap { position: relative; }
 .log-copy {
-  position: absolute; top: 16px; right: 8px; z-index: 2;
-  font-size: 11px; padding: 4px 10px; border-radius: 8px;
-  background: var(--surface2); border: 1px solid var(--line); color: var(--txt);
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  font-size: 10px; padding: 2px 8px; border-radius: 6px;
+  background: rgba(0,0,0,.5); border: 1px solid var(--line-soft); color: var(--dim);
+  opacity: .7;
 }
+.log-copy:active { opacity: 1; }
 .log:empty { display: none; }
 .log .ok { color: var(--ok); }
 .log .err { color: var(--err); }
@@ -772,6 +774,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261017k"></script>
+<script type="module" src="app-v3.js?v=20261017l"></script>
 </body>
 </html>
