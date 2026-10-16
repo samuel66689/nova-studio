@@ -607,8 +607,19 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
 
     if (onprog) { try { onprog(elapsed / totalDur, i, segData.length); } catch (_) {} }
 
-    // Seek video to segment start
-    video.currentTime = s.start;
+    // PHASE 1 Gap-1 fix: Do NOT silently treat output timeline as source timeline.
+    // Only seek when a genuine sourceStart exists. Otherwise continue from
+    // current position — the output timestamp is narration timing, not a
+    // source-video position. (Phase 3 will add proper scene matching.)
+    if (typeof s.sourceStart === "number" && isFinite(s.sourceStart) && s.sourceStart >= 0) {
+      video.currentTime = s.sourceStart;
+    } else {
+      // No source timestamp: keep playing from current position.
+      // First segment starts at 0 (video freshly loaded).
+      try {
+        console.warn(`[Phase1] seg ${i}: no sourceStart — continuing from ${video.currentTime.toFixed(1)}s (NOT seeking to output ${s.start}s)`);
+      } catch (_) {}
+    }
     await new Promise((res) => {
       const h = () => { video.removeEventListener("seeked", h); res(); };
       video.addEventListener("seeked", h);
