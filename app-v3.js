@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017i";
+} from "./js/api.js?v=20261017k";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1662,8 +1662,13 @@ $("startRecap").addEventListener("click", async () => {
     }
     $("rcScript").value = segments.map((s) => {
       // SRC format: show source timestamps; output calculated later from audio
+      // Guard: both must be finite numbers, else show validation error
       if (s.sourceStart !== undefined) {
-        return `[SRC ${fmtClock(s.sourceStart)}-${fmtClock(s.sourceEnd)}] ${s.text}`;
+        const a = s.sourceStart, b = s.sourceEnd;
+        if (typeof a !== "number" || !isFinite(a) || typeof b !== "number" || !isFinite(b)) {
+          return `[SRC INVALID] ${s.text} (timestamp error - see log)`;
+        }
+        return `[SRC ${fmtClock(a)}-${fmtClock(b)}] ${s.text}`;
       }
       const a = s.outputStart ?? s.start, b = s.outputEnd ?? s.end;
       // Guard against NaN display
