@@ -93,7 +93,11 @@ export async function canvasExport(videoBlob, opts = {}) {
 
   await new Promise((res, rej) => {
     video.onloadedmetadata = res;
-    video.onerror = () => rej(new Error("video ဖတ်မရပါ"));
+    video.onerror = () => {
+      const ec = video.error ? video.error.code : "?";
+      try { console.warn(`[canvas-export] video load failed: type=${videoBlob.type || "?"} size=${videoBlob.size || "?"} error.code=${ec}`); } catch (_) {}
+      rej(new Error(`video ဖတ်မရပါ (type=${videoBlob.type || "?"}, code=${ec}) — browser ဒီ format ကို decode မရပါ`));
+    };
   });
 
   const dur = video.duration || 0;
@@ -305,7 +309,12 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   await new Promise((res, rej) => {
     const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
     video.onloadedmetadata = () => { clearTimeout(to); res(); };
-    video.onerror = () => { clearTimeout(to); rej(new Error("video ဖတ်မရပါ")); };
+    video.onerror = () => {
+      clearTimeout(to);
+      const ec = video.error ? video.error.code : "?";
+      try { console.warn(`[canvas-export] video load failed: code=${ec}`); } catch (_) {}
+      rej(new Error(`video ဖတ်မရပါ (code=${ec}) — browser ဒီ format ကို decode မရပါ`));
+    };
   });
 
   const dur = video.duration || 0;
@@ -533,7 +542,12 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   await new Promise((res, rej) => {
     const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
     video.onloadedmetadata = () => { clearTimeout(to); res(); };
-    video.onerror = () => { clearTimeout(to); rej(new Error("video ဖတ်မရပါ")); };
+    video.onerror = () => {
+      clearTimeout(to);
+      const ec = video.error ? video.error.code : "?";
+      try { console.warn(`[canvas-export] video load failed: code=${ec}`); } catch (_) {}
+      rej(new Error(`video ဖတ်မရပါ (code=${ec}) — browser ဒီ format ကို decode မရပါ`));
+    };
   });
 
   const canvas = document.createElement("canvas");
