@@ -2,7 +2,7 @@
 // Why server-side: browser-side Edge TTS exposes the user's IP (VPN exit IPs
 // get blocked); the maintained `edge-tts` Python library handles Microsoft's
 // rotating TrustedClientToken + Sec-MS-GEC DRM automatically.
-const { spawnSync } = require("child_process");
+const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
@@ -80,17 +80,37 @@ asyncio.run(main())
 
 function synth(text, voice) {
   return new Promise((resolve, reject) => {
-    const p = spawnSync("python3", ["-c", PY], {
-      input: JSON.stringify({ text, voice }),
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 90000,
+    const p = spawn("python3", ["-c", PY], { timeout: 90000 });
+    const out = [], err = [];
+    let killed = false;
+    const timer = setTimeout(() => {
+      killed = true;
+      try { p.kill("SIGKILL"); } catch (_) {}
+      reject(new Error("edge-tts timeout"));
+    }, 90000);
+    p.stdout.on("data", (d) => {
+      out.push(d);
+      if (Buffer.concat(out).length > 64 * 1024 * 1024) {
+        clearTimeout(timer);
+        try { p.kill("SIGKILL"); } catch (_) {}
+        reject(new Error("edge-tts output too large"));
+      }
     });
-    if (p.error) return reject(p.error);
-    if (p.status !== 0) {
-      const err = (p.stderr || Buffer.alloc(0)).toString().slice(0, 300);
-      return reject(new Error("edge-tts failed: " + err));
-    }
-    resolve(p.stdout);
+    p.stderr.on("data", (d) => err.push(d));
+    p.on("error", (e) => { clearTimeout(timer); reject(e); });
+    p.on("close", (code) => {
+      clearTimeout(timer);
+      if (killed) return;
+      if (code !== 0) {
+        const msg = Buffer.concat(err).toString().slice(0, 300);
+        return reject(new Error("edge-tts failed: " + msg));
+      }
+      resolve(Buffer.concat(out));
+    });
+    try {
+      p.stdin.write(JSON.stringify({ text, voice }));
+      p.stdin.end();
+    } catch (e) { clearTimeout(timer); reject(e); }
   });
 }
 
@@ -118,17 +138,27 @@ const server = http.createServer(async (req, res) => {
         const data = JSON.parse(body || "{}");
         const segs = data.segments || [];
         if (!segs.length) { res.writeHead(400); res.end("no segments"); return; }
-        const p = spawnSync("python3", ["-c", MIX_PY_MIX], {
-          input: JSON.stringify({ segments: segs, videoDur: data.videoDur || 0 }),
-          maxBuffer: 64 * 1024 * 1024,
-          timeout: 150000,
+        const audio = await new Promise((resolve, reject) => {
+          const p = spawn("python3", ["-c", MIX_PY_MIX], { timeout: 150000 });
+          const out = [], err = [];
+          const timer = setTimeout(() => {
+            try { p.kill("SIGKILL"); } catch (_) {}
+            reject(new Error("mix timeout"));
+          }, 150000);
+          p.stdout.on("data", (d) => out.push(d));
+          p.stderr.on("data", (d) => err.push(d));
+          p.on("error", (e) => { clearTimeout(timer); reject(e); });
+          p.on("close", (code) => {
+            clearTimeout(timer);
+            if (code !== 0) {
+              const msg = Buffer.concat(err).toString().slice(0, 500);
+              return reject(new Error("mix failed: " + msg));
+            }
+            resolve(Buffer.concat(out));
+          });
+          p.stdin.write(JSON.stringify({ segments: segs, videoDur: data.videoDur || 0 }));
+          p.stdin.end();
         });
-        if (p.error) throw p.error;
-        if (p.status !== 0) {
-          const err = (p.stderr || Buffer.alloc(0)).toString().slice(0, 500);
-          throw new Error("mix failed: " + err);
-        }
-        const audio = p.stdout;
         res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
         res.end(audio);
       } catch (e) {
