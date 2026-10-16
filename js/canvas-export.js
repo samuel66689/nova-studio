@@ -3,10 +3,62 @@
 
 /**
  * Export video with effects via canvas.
+
+const RATIOS = { "9:16": [9,16], "16:9": [16,9], "1:1": [1,1], "4:5": [4,5], "3:4": [3,4] };
+export const BITRATE = { 480: 2e6, 720: 4e6, 1080: 8e6 };
+const even = (n) => Math.round(n / 2) * 2;
+export function getOutDims(ratio, res, vw, vh) {
+  const [a, b] = ratio === "original" ? [vw, vh] : (RATIOS[ratio] || RATIOS["9:16"]);
+  const W = a <= b ? res : res * a / b, H = a <= b ? res * b / a : res;
+  return { W: even(W), H: even(H), k: even(W) / 720 };
+}
+
  * @param {Blob} videoBlob - input video
  * @param {Object} opts - {flip, watermarkText, subtitles: [{start,end,text}], width, height, onprog}
  * @returns {Promise<Blob>} - recorded video blob (webm or mp4)
  */
+
+/** Patch MP4 duration by modifying header only (2MB, no full re-encode) */
+export async function patchMp4Duration(blob, sec) {
+  try {
+    const HEAD = Math.min(blob.size, 2 << 20);
+    const buf = new Uint8Array(await blob.slice(0, HEAD).arrayBuffer());
+    const dv = new DataView(buf.buffer);
+    const u32 = (o) => dv.getUint32(o);
+    const tp = (o) => String.fromCharCode(buf[o], buf[o+1], buf[o+2], buf[o+3]);
+    const put = (o, v, big) => {
+      if (big) { dv.setUint32(o, Math.floor(v / 2**32)); dv.setUint32(o+4, v >>> 0); }
+      else dv.setUint32(o, v >>> 0);
+    };
+    const walk = (s, e, cb) => {
+      for (let o = s; o + 8 <= e;) {
+        let sz = u32(o), h = 8;
+        if (sz === 1) { sz = u32(o+8) * 2**32 + u32(o+12); h = 16; }
+        if (sz < h) break;
+        cb(tp(o+4), o+h, Math.min(o+sz, e));
+        o += sz;
+      }
+    };
+    let mts = 1000, n = 0;
+    walk(0, HEAD, (t, p, e) => {
+      if (t !== "moov") return;
+      walk(p, e, (t2, p2, e2) => {
+        if (t2 === "mvhd") {
+          const v = buf[p2], o = p2 + 4 + (v ? 16 : 8);
+          mts = u32(o); put(o+4, Math.round(sec*mts), v===1); n++;
+        }
+        if (t2 === "trak") walk(p2, e2, (t3, p3, e3) => {
+          if (t3 === "tkhd") { const v = buf[p3]; put(p3 + 4 + (v ? 24 : 16), Math.round(sec*mts), v===1); n++; }
+          if (t3 === "mdia") walk(p3, e3, (t4, p4) => {
+            if (t4 === "mdhd") { const v = buf[p4], o = p4 + 4 + (v ? 16 : 8); put(o+4, Math.round(sec*u32(o)), v===1); n++; }
+          });
+        });
+      });
+    });
+    return n ? new Blob([buf, blob.slice(HEAD)], { type: blob.type }) : blob;
+  } catch (_) { return blob; }
+}
+
 export async function canvasExport(videoBlob, opts = {}) {
   const {
     flip = false,
@@ -91,7 +143,7 @@ export async function canvasExport(videoBlob, opts = {}) {
   if (!mimeType) throw new Error("MediaRecorder မရပါ");
 
   const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 });
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate || 4_000_000 });
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const done = new Promise((res) => { rec.onstop = res; });
 
@@ -188,7 +240,8 @@ function subtitleAnchor(W, H, blur, flip, mode) {
     return { cx: (x + b.w / 2) * W, cy: (b.y + b.h / 2) * H,
              maxW: Math.max(b.w * W, W * 0.6) };
   }
-  return { cx: W / 2, cy: H - 100, maxW: W - 40 };
+  const k = W / 720;
+  return { cx: W / 2, cy: H - 100*k, maxW: W - 40*k };
 }
 
 /** Unified scene renderer: video -> blur -> subtitle -> logo */
@@ -206,8 +259,8 @@ function drawScene(ctx, W, H, S, zoom = 1) {
       anchor: subtitleAnchor(W, H, S.blur, S.flip, S.sub.pos) });
   if (S.logo.img && S.logo.pos)
     drawLogo(ctx, S.logo.img, W, H, S.logo.pos, S.logo.shape);
-  if (S.wm) { ctx.font = "22px sans-serif";
-    ctx.fillStyle = "rgba(255,255,255,.75)"; ctx.fillText(S.wm, 12, H - 36); }
+  if (S.wm) { const k = W / 720; ctx.font = `${22*k}px sans-serif`;
+    ctx.fillStyle = "rgba(255,255,255,.75)"; ctx.fillText(S.wm, 12*k, H - 36*k); }
 }
 
 export async function canvasDubSync(videoBlob, segments, opts = {}) {
@@ -275,7 +328,7 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   if (!mimeType) throw new Error("MediaRecorder မရပါ");
 
   const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 });
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate || 4_000_000 });
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const recDone = new Promise((res) => { rec.onstop = res; });
 
@@ -359,13 +412,14 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
 function drawStyledSubtitle(ctx, text, W, H, o) {
   const { color="#ffffff", size=28, font="Aka07",
           shadeColor="#000000", thickness=4, anchor } = o;
-  const a = anchor || { cx: W/2, cy: H-100, maxW: W-40 };
-  ctx.font = `bold ${size}px "${font}", "NotoSansMyanmar", sans-serif`;
+  const k = W / 720;
+  const a = anchor || { cx: W/2, cy: H-100*k, maxW: W-40*k };
+  ctx.font = `bold ${size*k}px "${font}", "NotoSansMyanmar", sans-serif`;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
   ctx.lineJoin = "round"; ctx.miterLimit = 2;
-  ctx.lineWidth = thickness;
+  ctx.lineWidth = thickness * k;
   ctx.strokeStyle = shadeColor; ctx.fillStyle = color;
-  const lines = wrapText(ctx, text, a.maxW), lh = size * 1.4;
+  const lines = wrapText(ctx, text, a.maxW), lh = size * k * 1.4;
   const y0 = a.cy - ((lines.length - 1) * lh) / 2;
   lines.forEach((ln, i) => {
     ctx.strokeText(ln, a.cx, y0 + i * lh);
@@ -509,7 +563,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   if (!mimeType) throw new Error("MediaRecorder မရပါ");
 
   const chunks = [];
-  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 });
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate || 4_000_000 });
   rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   const recDone = new Promise((res) => { rec.onstop = res; });
 
