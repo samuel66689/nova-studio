@@ -619,11 +619,27 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
 
     // Play video for min(c, d), then freeze if needed
     const playTime = Math.min(c, d);
-    video.play();
+    try { await video.play(); } catch (e) {
+      console.warn("[recap] video.play() blocked:", e.message);
+    }
     const t0 = performance.now();
+    let pauseWarned = false;
     await new Promise((res) => {
       const check = () => {
         const el = (performance.now() - t0) / 1000;
+        // Detect unexpected pause (Chrome background tab)
+        if (video.paused && !video.ended && el < playTime) {
+          if (!pauseWarned) {
+            pauseWarned = true;
+            console.warn("[recap] ⚠️ Video paused unexpectedly! (tab switched?)");
+            try {
+              if (typeof window !== "undefined" && window.__novaOnVideoPause)
+                window.__novaOnVideoPause();
+            } catch (_) {}
+          }
+          // Try to resume
+          video.play().catch(() => {});
+        }
         S.t = video.currentTime; S.text = pickChunk(s.text, el, d);
         drawScene(ctx, width, height, S);
         if (el < playTime && !video.ended) {
