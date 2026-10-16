@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017p";
+} from "./js/api.js?v=20261017q";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1145,6 +1145,91 @@ function delMemory(title) {
   if (!title) return;
   try { localStorage.removeItem(memKey(title)); } catch (_) {}
 }
+/**
+ * Parse memory text into part blocks.
+ * Returns [{part: "1", num: 1, text: "..."}, ...] preserving legacy format.
+ * Non-part text (before first header) is kept as {part: null}.
+ */
+function parseMemoryParts(text) {
+  const parts = [];
+  if (!text) return parts;
+  const re = /\[Part\s+([^\]]+)\]/gi;
+  let m, lastIdx = 0, lastPart = null;
+  while ((m = re.exec(text)) !== null) {
+    // Text before this header belongs to previous part (or preamble)
+    if (lastPart !== null || lastIdx < m.index) {
+      const t = text.slice(lastIdx, m.index).trim();
+      if (t || lastPart !== null) {
+        parts.push({ part: lastPart, num: partNum(lastPart), text: t });
+      }
+    }
+    lastPart = m[1].trim();
+    lastIdx = m.index + m[0].length;
+  }
+  // Trailing text
+  const tail = text.slice(lastIdx).trim();
+  if (tail || lastPart !== null) {
+    parts.push({ part: lastPart, num: partNum(lastPart), text: tail });
+  }
+  return parts;
+}
+/** Normalize part identifier to number for sorting (End = Infinity) */
+function partNum(p) {
+  if (p === null || p === undefined) return -1;
+  const s = String(p).trim().toLowerCase();
+  if (s === "end") return Infinity;
+  const n = parseInt(s, 10);
+  return isNaN(n) ? -1 : n;
+}
+/** Normalize part identifier for comparison (e.g. "1" == "01") */
+function normPart(p) {
+  const n = partNum(p);
+  if (n === Infinity) return "end";
+  if (n >= 0) return String(n);
+  return String(p).trim().toLowerCase();
+}
+/** Rebuild memory text from parts, sorted ascending */
+function buildMemoryText(parts) {
+  const sorted = [...parts].sort((a, b) => a.num - b.num);
+  return sorted.map(p => {
+    if (p.part === null) return p.text;
+    return `[Part ${p.part}]\n` + p.text;
+  }).join("\n\n").trim();
+}
+/**
+ * Set memory for a specific part (replace if exists, else add).
+ * Preserves other parts unchanged, keeps ascending order.
+ */
+function setMemoryPart(title, part, memText) {
+  if (!title || memText === null || memText === undefined) return;
+  const np = normPart(part);
+  const parts = parseMemoryParts(getMemory(title));
+  let found = false;
+  for (const p of parts) {
+    if (p.part !== null && normPart(p.part) === np) {
+      p.text = memText.trim();
+      p.part = String(partNum(part) === Infinity ? "End" : partNum(part));
+      p.num = partNum(p.part);
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    parts.push({ part: String(part), num: partNum(part), text: memText.trim() });
+  }
+  saveMemory(title, buildMemoryText(parts));
+}
+/**
+ * Get memory for parts strictly earlier than the given part.
+ * Part 1 gets no prior context. End gets all numbered parts.
+ */
+function getMemoryBefore(title, part) {
+  const n = partNum(part);
+  const parts = parseMemoryParts(getMemory(title));
+  const earlier = parts.filter(p => p.part !== null && p.num >= 0 && p.num < n);
+  if (!earlier.length) return null;
+  return buildMemoryText(earlier);
+}
 function refreshSeriesDropdown() {
   const sel = $("rcSeriesTitleSel");
   if (!sel) return;
@@ -1172,7 +1257,9 @@ function seriesPromptExtra() {
   const s = getSeriesInfo();
   if (!s) return "";
   let extra = "";
-  const mem = getMemory(s.title);
+  // Only use memories from parts STRICTLY EARLIER than current part
+  // Part 1 gets no prior context; reruns don't see own/later memories
+  const mem = s.isEnd ? getMemory(s.title) : getMemoryBefore(s.title, s.part);
   if (mem && !s.isEnd) {
     extra += `\n\nSTORY MEMORY (previous parts of "${s.title}"): \n${mem}\n` +
       `Use the SAME character names and continue the story consistently.`;
@@ -1731,13 +1818,14 @@ $("startRecap").addEventListener("click", async () => {
       if (si && !si.isEnd && segments && segments.length) {
         log("rc", "📓 Memory ထုတ် နေ ပါ တယ်…");
         extractStoryMemory(segments).then((mem) => {
-          if (mem) {
-            const prev = getMemory(si.title);
-            saveMemory(si.title, (prev ? prev + "\n\n" : "") + `[Part ${si.part}]\n` + mem);
+          if (mem && mem.trim()) {
+            // Replace Part N block (no duplicates), preserve other parts
+            setMemoryPart(si.title, si.part, mem);
             log("rc", "📓 Memory သိမ်း ပြီးပါ ပြီ ✅", "ok");
             refreshSeriesDropdown();
           } else {
-            log("rc", "📓 Memory ထုတ် မ ရ ပါ", "err");
+            // Do NOT replace valid memory with empty content
+            log("rc", "📓 Memory ထုတ် မ ရ ပါ (အဟောင်း မပျက်)", "err");
           }
         }).catch((e) => log("rc", "📓 Memory error: " + (e.message || e), "err"));
       }
