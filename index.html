@@ -530,11 +530,7 @@ button.ghost:active { border-color: var(--acc); }
         <div style="display:flex;gap:8px;align-items:center;">
           <select id="rcVoice" style="flex:1;min-width:0;">
           <option value="my-MM-NilarNeural">👩 Nilar (မိန်းကလေး) — Edge</option>
-          <option value="my-MM-ThihaNeural">👨 Thiha (ယောကျ်ားလေး) — Edge</option>
-          <option value="gemini:Kore">✨ Kore — Gemini (VPN နဲ့ရ)</option>
-          <option value="gemini:Charon">✨ Charon — Gemini (VPN နဲ့ရ)</option>
-          <option value="gemini:Fenrir">✨ Fenrir — Gemini (VPN နဲ့ရ)</option>
-          <option value="gemini:Puck">✨ Puck — Gemini (VPN နဲ့ရ)</option>
+          <option value="my-MM-ThihaNeural" selected>👨 Thiha (ယောကျ်ားလေး) — Edge</option>
         </select>
           <button id="previewVoice" class="ghost" style="white-space:nowrap;padding:0 14px;" title="အသံအစမ်းနားထောင်">🔊 စမ်း</button>
         </div>
@@ -775,6 +771,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261017s"></script>
+<script type="module" src="app-v3.js?v=20261017t"></script>
 </body>
 </html>
