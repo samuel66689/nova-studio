@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017n";
+} from "./js/api.js?v=20261017o";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1279,19 +1279,19 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      let srt = "";
+      let srt = null;
       try { srt = segmentsToSRT(segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = "SRT generation failed: " + e.message + "\n";
+        srt = null; // Do NOT create file with error message
       }
-      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
       const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
-      const r2 = dlRow(baseName + "_dubbed.srt", srtBlob);
-      $("rcResults").appendChild(r2.row);
+      const r2 = srtBlob ? dlRow(baseName + "_dubbed.srt", srtBlob) : null;
+      if (r2) $("rcResults").appendChild(r2.row);
       const r3 = dlRow(baseName + "_script.txt", txtBlob);
       $("rcResults").appendChild(r3.row);
       setProgress("rc", 100, "ပြီးပါပြီ ✅");
@@ -1335,19 +1335,19 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       });
       // Fix WebM duration metadata (for CapCut/editors)
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      let srt = "";
-      try { srt = segmentsToSRT(segments); }
+      let srt = null;
+      try { srt = await srtFromSegsWithAudio(segsWithAudio, "rc"); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = "SRT generation failed: " + e.message + "\n";
+        srt = null; // Do NOT create file with error message
       }
-      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
-      const r2 = dlRow(baseName + "_recap.srt", srtBlob);
-      $("rcResults").appendChild(r2.row);
+      const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
+      if (r2) $("rcResults").appendChild(r2.row);
       const r3 = dlRow(baseName + "_script.txt", txtBlob);
       $("rcResults").appendChild(r3.row);
       setProgress("rc", 100, "ပြီးပါပြီ ✅");
@@ -1877,19 +1877,19 @@ $("startRecap").addEventListener("click", async () => {
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      let srt = "";
+      let srt = null;
       try { srt = segmentsToSRT(segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = "SRT generation failed: " + e.message + "\n";
+        srt = null; // Do NOT create file with error message
       }
-      const srtBlob = new Blob([srt], { type: "text/plain" });
+      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
       const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
-      const r2 = dlRow(baseName + "_dubbed.srt", srtBlob);
-      $("rcResults").appendChild(r2.row);
+      const r2 = srtBlob ? dlRow(baseName + "_dubbed.srt", srtBlob) : null;
+      if (r2) $("rcResults").appendChild(r2.row);
       const r3 = dlRow(baseName + "_script.txt", txtBlob);
       $("rcResults").appendChild(r3.row);
       setProgress("rc", 100, "ပြီးပါပြီ ✅");
@@ -1949,8 +1949,8 @@ $("startRecap").addEventListener("click", async () => {
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
-      const r2 = dlRow(baseName + "_recap.srt", srtBlob);
-      $("rcResults").appendChild(r2.row);
+      const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
+      if (r2) $("rcResults").appendChild(r2.row);
       const r3 = dlRow(baseName + "_script.txt", txtBlob);
       $("rcResults").appendChild(r3.row);
       setProgress("rc", 100, "ပြီးပါပြီ ✅");
