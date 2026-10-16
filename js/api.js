@@ -284,7 +284,11 @@ export const RECAP_STYLES = {
 };
 
 /** Recap from full video via Files API. style = story|viral|hybrid */
-export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="") {
+export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", opts={}) {
+  const targetMin = opts.targetMinutes;
+  const durHint = targetMin
+    ? `\nDURATION TARGET: ~${targetMin} minutes (~${Math.round(targetMin*60/8)} segments). Do NOT be overly concise.`
+    : "";
   const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"];
   const stylePrompt = (RECAP_STYLES[style] || RECAP_STYLES.story);
   const systemText = stylePrompt + "\n" + [
@@ -302,7 +306,7 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="") {
     "8. The LAST segment may end with a short teaser hook for the next episode.",
     "9. No Chinese, Thai or Latin characters — except brand/person names (transliterate rest).",
     "10. No intro, no markdown, no numbering — only segment lines.",
-  ].join("\n") + extraPrompt;
+  ].join("\n") + extraPrompt + durHint;
   let lastErr = null;
   for (const m of models) {
     try {
@@ -437,7 +441,11 @@ const RECAP_VISION_SYSTEM = [
 ].join("\n");
 
 /** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
-export async function geminiRecapScriptVision(frames, transcriptText, extraPrompt="") {
+export async function geminiRecapScriptVision(frames, transcriptText, extraPrompt="", opts={}) {
+  const targetMin = opts.targetMinutes;
+  const durHint = targetMin
+    ? `\nDURATION TARGET: Write enough segments for ~${targetMin} minutes (~${Math.round(targetMin*60/8)} segments). Do NOT be overly concise.`
+    : "";
   const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
   let lastErr = null;
   for (const m of models) {
@@ -448,7 +456,7 @@ export async function geminiRecapScriptVision(frames, transcriptText, extraPromp
         parts.push({ inlineData: { mimeType: "image/jpeg", data: f.b64 } });
       }
       parts.push({ text: "AUDIO TRANSCRIPT (with timestamps):\n" + transcriptText +
-        "\n\nNow watch the scenes above in story order and write the recap narration." + extraPrompt });
+        "\n\nNow watch the scenes above in story order and write the recap narration." + extraPrompt + durHint });
       const text = await geminiGenerateParts(m, RECAP_VISION_SYSTEM, parts, 8192);
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
       if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
@@ -505,14 +513,19 @@ export async function extractSceneFrames(file, maxFrames, onprog) {
 }
 
 /** Returns [{start,end,text}] recap segments. Tries 2.0-flash then 2.5-flash. */
-export async function geminiRecapScript(transcriptText, extraPrompt="") {
+export async function geminiRecapScript(transcriptText, extraPrompt="", opts={}) {
+  // Issue 1: Duration target — aim for ~50% of source, ±10% tolerance
+  const targetMin = opts.targetMinutes;
+  const durHint = targetMin
+    ? `\nDURATION TARGET: Write enough segments for ~${targetMin} minutes of narration (~${Math.round(targetMin*60/8)} segments of 8-10 sec each). Do NOT be overly concise — cover key events.`
+    : "";
   const models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
   let lastErr = null;
   for (const m of models) {
     try {
       const text = await geminiGenerate(
         m, RECAP_SYSTEM,
-        "Write the recap narration for this transcript:\n\n" + transcriptText + extraPrompt
+        "Write the recap narration for this transcript:\n\n" + transcriptText + extraPrompt + durHint
       );
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
       if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
