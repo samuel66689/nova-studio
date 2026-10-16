@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017h";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017i";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017h";
+} from "./js/api.js?v=20261017i";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1637,8 +1637,17 @@ $("startRecap").addEventListener("click", async () => {
         segments = await geminiRecapScript(transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
       }
     }
-    $("rcScript").value = segments.map((s) =>
-      `[${fmtClock(s.outputStart ?? s.start)}-${fmtClock(s.outputEnd ?? s.end)}] ${s.text}`).join("\n");
+    $("rcScript").value = segments.map((s) => {
+      // SRC format: show source timestamps; output calculated later from audio
+      if (s.sourceStart !== undefined) {
+        return `[SRC ${fmtClock(s.sourceStart)}-${fmtClock(s.sourceEnd)}] ${s.text}`;
+      }
+      const a = s.outputStart ?? s.start, b = s.outputEnd ?? s.end;
+      // Guard against NaN display
+      const fa = (typeof a === "number" && isFinite(a)) ? fmtClock(a) : "??:??";
+      const fb = (typeof b === "number" && isFinite(b)) ? fmtClock(b) : "??:??";
+      return `[${fa}-${fb}] ${s.text}`;
+    }).join("\n");
     log("rc", `script ရပါပြီ (${segments.length} segments) ✅`, "ok");
     setStep("script", "done");
     // Auto-save story memory if series ON (Phase 1)
