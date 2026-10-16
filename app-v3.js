@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017i";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017r";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -734,8 +734,11 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     muxPhase = "servermix";
     setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်… (server)");
     log("rc", "🔗 အသံတွေ server ပေါ်မှာ ပေါင်းနေပါတယ်…");
-    const mixSegs = [];
-    for (let k = 0; k < ssegs.length; k++) {
+    const mixSegs = new Array(ssegs.length);
+    let mixDone = 0;
+    // Bounded concurrency: 2 at a time. Order preserved via index.
+    // Each segment's start/end/rate mapping is unchanged.
+    async function prepareMixSeg(k) {
       const seg = ssegs[k];
       const pieces = segPieces[seg._i];
       // Combine pieces into one blob for duration measurement
@@ -759,8 +762,20 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
         r.onload = () => res(String(r.result).split(",")[1]);
         r.readAsDataURL(blob);
       });
-      mixSegs.push({ b64, start: seg.start, end: seg.end, rate });
-      setProgress("rc", 91 + ((k + 1) / ssegs.length) * 2, `ပြင်ဆင်နေပါတယ်… (${k + 1}/${ssegs.length})`);
+      mixSegs[k] = { b64, start: seg.start, end: seg.end, rate };
+      mixDone++;
+      setProgress("rc", 91 + (mixDone / ssegs.length) * 2, `ပြင်ဆင်နေပါတယ်… (${mixDone}/${ssegs.length})`);
+    }
+    {
+      let nextK = 0;
+      const workers = [0, 1].map(async () => {
+        while (true) {
+          const k = nextK++;
+          if (k >= ssegs.length) break;
+          await prepareMixSeg(k);
+        }
+      });
+      await Promise.all(workers);
     }
     try { await ACtx.close(); } catch (_) {}
     // video duration for final pad
@@ -1859,37 +1874,55 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (${useGeminiTTS ? "Gemini TTS \u2014 " + gVoice : "server TTS \u2014 " + voice})\u2026`);
     const segPieces = segments.map(() => []);
     let ttsFailed = null;
-    for (let i = 0; i < segments.length; i++) {
+    let ttsDone = 0;
+    // Bounded concurrency: 2 segments at a time. Each segment's pieces
+    // are still processed sequentially with retries. Order preserved via index.
+    async function processTtsSegment(i) {
       const seg = segments[i];
-      setProgress("rc", 60 + ((i + 1) / segments.length) * 25,
-        `အသံထွက်နေပါတယ်… (${i + 1}/${segments.length})`);
       const pieces = splitLongText(seg.text, 700);
-      try {
-        for (const pc of pieces) {
-          let b = null, terr = null;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              b = await ttsPiece(pc);
-              if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
-              terr = null;
-              break;
-            } catch (e) {
-              terr = e;
-              log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/3) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
-              await new Promise((r) => setTimeout(r, 2000 * attempt));
-            }
+      for (const pc of pieces) {
+        let b = null, terr = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            b = await ttsPiece(pc);
+            if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
+            terr = null;
+            break;
+          } catch (e) {
+            terr = e;
+            log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/3) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
+            await new Promise((r) => setTimeout(r, 2000 * attempt));
           }
-          if (!b || b.size === 0) throw terr || new Error("TTS မအောင်မြင်ပါ");
-          segPieces[i].push(b);
         }
-        if ((i + 1) % 5 === 0 || i === segments.length - 1) {
-          log("rc", `အသံ ${i + 1}/${segments.length} ပြီးပါပြီ`, "ok");
-        }
-      } catch (e) {
-        ttsFailed = { index: i, text: seg.text, error: e };
-        log("rc", `❌ အပိုင်း ${i + 1} TTS မအောင်မြင်ပါ: ${e.message}`, "err");
-        break;
+        if (!b || b.size === 0) throw terr || new Error("TTS မအောင်မြင်ပါ");
+        segPieces[i].push(b);
       }
+      ttsDone++;
+      setProgress("rc", 60 + (ttsDone / segments.length) * 25,
+        `အသံထွက်နေပါတယ်… (${ttsDone}/${segments.length})`);
+      if (ttsDone % 5 === 0 || ttsDone === segments.length) {
+        log("rc", `အသံ ${ttsDone}/${segments.length} ပြီးပါပြီ`, "ok");
+      }
+    }
+    {
+      let nextIdx = 0;
+      const workers = [0, 1].map(async () => {
+        while (true) {
+          if (ttsFailed) break;
+          const i = nextIdx++;
+          if (i >= segments.length) break;
+          try {
+            await processTtsSegment(i);
+          } catch (e) {
+            if (!ttsFailed) {
+              ttsFailed = { index: i, text: segments[i].text, error: e };
+              log("rc", `❌ အပိုင်း ${i + 1} TTS မအောင်မြင်ပါ: ${e.message}`, "err");
+            }
+            break;
+          }
+        }
+      });
+      await Promise.all(workers);
     }
     if (ttsFailed) {
       setStep("tts", "fail");
