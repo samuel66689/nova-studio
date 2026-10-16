@@ -543,6 +543,22 @@ export async function aaiTranscribe(audioBlob, apiKey) {
   throw new Error("AssemblyAI timeout");
 }
 
+/** Extract story memory from recap segments (characters, places, plot) */
+export async function extractStoryMemory(segments) {
+  const text = segments.map((s) => s.text).join("\n").slice(0, 4000);
+  if (!text.trim()) return "";
+  const prompt = "From this recap narration, extract:\n" +
+    "1. Characters (name = role, e.g. လီဝေ = မင်းသား)\n" +
+    "2. Places\n" +
+    "3. Key plot points (2-3 lines)\n\n" +
+    "Write in Burmese, concise. Format:\n" +
+    "ဇာတ်ကောင်: ...\nနေရာ: ...\nအဖြစ်: ...\n\nNarration:\n" + text;
+  try {
+    const result = await geminiText(prompt, 1000);
+    return (result || "").trim();
+  } catch (_) { return ""; }
+}
+
 export function parseRecapSegments(text) {
   const segs = [];
   // Accept -, –, —, and "00:00 - 00:12" format
