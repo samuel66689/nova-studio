@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016m";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016n";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -18,6 +18,11 @@ document.addEventListener("DOMContentLoaded", () => {
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
   $("rcRes")?.addEventListener("change", rcApplyLayout);
+  // Video pause warning (Chrome background tab)
+  window.__novaOnVideoPause = () => {
+    log("rc", "⚠️ Video ရပ် သွား တယ်! Chrome tab ပြန် ဝင် ပါ — မ ထွက် ပါ နဲ့", "err");
+    alert("⚠️ Video ရပ် သွား တယ်!\nChrome tab ထဲ ပြန် ဝင် ပါ။\nSync ပြီးသည် အထိ မ ထွက် ပါ နဲ့။");
+  };
   $("rcSeriesOn")?.addEventListener("change", (e) => {
     $("rcSeriesBox").style.display = e.target.checked ? "block" : "none";
     if (e.target.checked) refreshSeriesDropdown();
@@ -55,7 +60,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory,
-} from "./js/api.js?v=20261016m";
+} from "./js/api.js?v=20261016n";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
