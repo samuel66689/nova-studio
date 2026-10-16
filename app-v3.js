@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016g";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016h";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -974,15 +974,18 @@ function rcUpdateSubPreview() {
     wrap.appendChild(sel);
   }
   const color = ($("rcSubColor") || {}).value || "#ffffff";
-  const size = ($("rcSubSize") || {}).value || "28";
+  const size = parseInt((($("rcSubSize") || {}).value || "28"), 10);
   const font = ($("rcSubFont") || {}).value || "Aka07";
   const shadeColor = ($("rcShadeColor") || {}).value || "#000000";
-  const thick = ($("rcShadeThick") || {}).value || "4";
+  const thick = parseInt((($("rcShadeThick") || {}).value || "4"), 10);
+  // Scale to preview width (preview is ~340px, export is 720px)
+  const k = (wrap.clientWidth || 340) / 720;
   sel.style.color = color;
-  sel.style.fontSize = size + "px";
+  sel.style.fontSize = (size * k) + "px";
   sel.style.fontFamily = `"${font}", sans-serif`;
   sel.style.fontWeight = "bold";
-  sel.style.textShadow = `-${thick}px 0 0 ${shadeColor}, ${thick}px 0 0 ${shadeColor}, 0 -${thick}px 0 ${shadeColor}, 0 ${thick}px 0 ${shadeColor}`;
+  const tk = thick * k;
+  sel.style.textShadow = `-${tk}px 0 0 ${shadeColor}, ${tk}px 0 0 ${shadeColor}, 0 -${tk}px 0 ${shadeColor}, 0 ${tk}px 0 ${shadeColor}`;
   sel.textContent = text;
 }
 ["rcSubPreviewText", "rcSubOn", "rcSubColor", "rcSubSize", "rcSubFont", "rcShadeColor", "rcShadeThick"].forEach((id) => {
