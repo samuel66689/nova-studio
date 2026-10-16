@@ -1,10 +1,25 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE } from "./js/canvas-export.js?v=20261016f";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016g";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
+
+// Preview layout: update on video load and ratio/res change
+document.addEventListener("DOMContentLoaded", () => {
+  const pv = $("rcBlurPrev");
+  if (pv) pv.addEventListener("loadedmetadata", (e) => {
+    rcSrc = { vw: e.target.videoWidth || 576, vh: e.target.videoHeight || 1024 };
+    rcApplyLayout();
+  });
+  $("rcRatio")?.addEventListener("change", () => {
+    rcApplyLayout();
+    alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
+  });
+  $("rcRes")?.addEventListener("change", rcApplyLayout);
+  rcApplyLayout();
+});
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -999,22 +1014,33 @@ function getStyleOpts() {
   };
 }
 
+/** Video source dimensions (updated on metadata load) */
+let rcSrc = { vw: 576, vh: 1024 };
 /** Get output dimensions from UI selections */
 function getRcDims() {
   const ratio = ($("rcRatio") || {}).value || "9:16";
   const res = parseInt((($("rcRes") || {}).value || "720"), 10);
-  const RATIOS = { "9:16": [9,16], "16:9": [16,9], "1:1": [1,1], "4:5": [4,5], "original": [9,16] };
-  const [a, b] = RATIOS[ratio] || RATIOS["9:16"];
-  const even = (n) => Math.round(n / 2) * 2;
-  const W = a <= b ? res : res * a / b, H = a <= b ? res * b / a : res;
-  const W2 = even(W), H2 = even(H);
-  return { width: W2, height: H2, bitrate: BITRATE[res] || 4e6 };
+  const { W, H } = getOutDims(ratio, res, rcSrc.vw, rcSrc.vh);
+  return { width: W, height: H, bitrate: BITRATE[res] || 4e6 };
+}
+/** Update preview wrapper to match output aspect */
+function rcApplyLayout() {
+  const { width, height } = getRcDims();
+  const w = $("rcBlurWrap");
+  if (w) {
+    w.style.aspectRatio = width + " / " + height;
+    w.style.maxWidth = width >= height ? "560px" : "340px";
+  }
 }
 
 /** Fix duration metadata via FFmpeg stream-copy remux (for MP4/WebM) */
-async function fixDuration(blob, ext) {
+async function fixDuration(blob, ext, sec) {
   try {
-    if (blob.size > 350 * 1048576) return blob; // skip if too large for phone memory
+    if (blob.size > 350 * 1048576) {
+      // Use header patch for large files (no ffmpeg memory)
+      if (ext === "mp4" && sec > 0) return await patchMp4Duration(blob, sec);
+      return blob;
+    }
     const ff = await ensureFFmpeg((m, c) => log("rc", m, c));
     const i = "rec_in." + ext, o = "rec_out." + ext;
     await ff.writeFile(i, await fetchFile(blob));
