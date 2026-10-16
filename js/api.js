@@ -679,10 +679,20 @@ export function validateRecapSegments(segs, opts = {}) {
           isFinite(s.sourceStart) && isFinite(s.sourceEnd) && s.sourceEnd <= s.sourceStart)
         errors.push(`Segment ${n}: sourceEnd သည် sourceStart ထက် ကြီး ရ မယ်`);
       if (srcDur && isFinite(srcDur)) {
-        if (typeof s.sourceEnd === "number" && s.sourceEnd > srcDur)
-          errors.push(`Segment ${n}: sourceEnd (${fmtClock(s.sourceEnd)}) သည် video အရှည် (${fmtClock(srcDur)}) ထက် ကျော် နေ`);
-        if (typeof s.sourceStart === "number" && s.sourceStart >= srcDur)
-          errors.push(`Segment ${n}: sourceStart သည် video အရှည် ထက် ကျော် နေ`);
+        // Allow 5s tolerance for AI imprecision (e.g. 08:04 vs 08:02) — clamp with warning, not silent
+        const TOL = 5;
+        if (typeof s.sourceEnd === "number" && s.sourceEnd > srcDur + TOL)
+          errors.push(`Segment ${n}: sourceEnd (${fmtClock(s.sourceEnd)}) သည် video အရှည် (${fmtClock(srcDur)}) ထက် အများ ကြီး ကျော် နေ`);
+        else if (typeof s.sourceEnd === "number" && s.sourceEnd > srcDur) {
+          try { console.warn(`[validate] Segment ${n}: sourceEnd clamped ${fmtClock(s.sourceEnd)} → ${fmtClock(srcDur)}`); } catch (_) {}
+          s.sourceEnd = srcDur;
+        }
+        if (typeof s.sourceStart === "number" && s.sourceStart >= srcDur + TOL)
+          errors.push(`Segment ${n}: sourceStart သည် video အရှည် ထက် အများ ကြီး ကျော် နေ`);
+        else if (typeof s.sourceStart === "number" && s.sourceStart >= srcDur) {
+          try { console.warn(`[validate] Segment ${n}: sourceStart clamped to ${fmtClock(srcDur - 1)}`); } catch (_) {}
+          s.sourceStart = Math.max(0, srcDur - 1);
+        }
       }
     }
   });
