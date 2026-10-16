@@ -22,6 +22,8 @@ export function clearKeys() {
 export function pad2(n) { return String(n).padStart(2, "0"); }
 
 export function fmtClock(sec) {
+  // Guard: never return "NaN:NaN" — return "??:??" for invalid input
+  if (typeof sec !== "number" || !isFinite(sec)) return "??:??";
   sec = Math.max(0, Math.floor(sec));
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
   return (h > 0 ? pad2(h) + ":" : "") + pad2(m) + ":" + pad2(s);
