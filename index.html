@@ -486,8 +486,8 @@ button.ghost:active { border-color: var(--acc); }
     <div id="rcBlurSection" style="display:none;">
       <div class="sect">
         <span class="sect-title">🟫 Blur box <span style="color:var(--dim);font-weight:400;font-size:12px;">(preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</span></span>
-        <div id="rcBlurWrap" style="position:relative;display:inline-block;max-width:100%;">
-          <video id="rcBlurPrev" controls playsinline style="width:100%;max-height:480px;display:block;border-radius:12px;"></video>
+        <div id="rcBlurWrap" style="position:relative;width:100%;max-width:340px;aspect-ratio:9/16;background:#000;border-radius:12px;overflow:hidden;margin:0 auto;">
+          <video id="rcBlurPrev" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
         </div>
         <div class="btn-row" style="margin-top:8px;">
           <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
@@ -620,6 +620,23 @@ button.ghost:active { border-color: var(--acc); }
           <select id="rcSubPos">
             <option value="onBlur" selected>Blur box ပေါ်</option>
             <option value="bottom">အောက်</option>
+          </select>
+        </div>
+        <div>
+          <label>Video အချိုး (Ratio)</label>
+          <select id="rcRatio">
+            <option value="9:16" selected>9:16 (TikTok/Reels)</option>
+            <option value="16:9">16:9 (YouTube)</option>
+            <option value="1:1">1:1 (Square)</option>
+            <option value="4:5">4:5 (Portrait)</option>
+            <option value="original">မူရင်း</option>
+          </select>
+        </div>
+        <div>
+          <label>Resolution</label>
+          <select id="rcRes">
+            <option value="480">480p (မြန်, file သေး)</option>
+            <option value="720" selected>720p (အကောင်း)</option>
           </select>
         </div>
       </div>
