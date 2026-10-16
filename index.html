@@ -287,14 +287,15 @@ button.ghost:active { border-color: var(--acc); }
   scrollbar-width: thin; scrollbar-color: var(--line) transparent;
   user-select: text; -webkit-user-select: text;
 }
-.log-wrap { position: relative; }
+.log-wrap { margin-top: 4px; }
 .log-copy {
-  position: absolute; top: 6px; right: 6px; z-index: 2;
+  display: block; margin: 4px 0 0 auto;
   font-size: 10px; padding: 2px 8px; border-radius: 6px;
-  background: rgba(0,0,0,.5); border: 1px solid var(--line-soft); color: var(--dim);
-  opacity: .7;
+  background: transparent; border: 1px solid var(--line-soft); color: var(--dim2);
+  opacity: .6;
 }
 .log-copy:active { opacity: 1; }
+.log:empty + .log-copy, .log-wrap:has(.log:empty) .log-copy { display: none; }
 .log:empty { display: none; }
 .log .ok { color: var(--ok); }
 .log .err { color: var(--err); }
@@ -429,8 +430,8 @@ button.ghost:active { border-color: var(--acc); }
     <div class="results" id="cutResults"></div>
     <button id="downloadAll" class="ghost" style="display:none">⬇️ အားလုံး download</button>
     <div class="log-wrap">
-      <button class="log-copy" data-log="cutLog" onclick="copyLog('cutLog')">📋 Copy</button>
       <div class="log" id="cutLog"></div>
+      <button class="log-copy" onclick="copyLog('cutLog')">📋</button>
     </div>
     <div class="hint">Re-encode မလုပ်ဘူး (stream copy) — ဒါကြောင့် အရမ်းမြန်တယ်။ Download ဆိုတာ browser memory ကနေ save ချရုံပဲ။</div>
   </div>
@@ -480,8 +481,8 @@ button.ghost:active { border-color: var(--acc); }
     <div class="plabel" id="edProgressLabel"></div>
     <div class="results" id="edResults"></div>
     <div class="log-wrap">
-      <button class="log-copy" data-log="edLog" onclick="copyLog('edLog')">📋 Copy</button>
       <div class="log" id="edLog"></div>
+      <button class="log-copy" onclick="copyLog('edLog')">📋</button>
     </div>
     <div class="hint">Filter (crop/flip/subtitle/compress) တစ်ခုမှ မသုံးရင် re-encode မလုပ်ဘဲ အမြန် copy ကူးမယ်။</div>
   </div>
@@ -743,8 +744,8 @@ button.ghost:active { border-color: var(--acc); }
 
     <div class="results" id="rcResults"></div>
     <div class="log-wrap">
-      <button class="log-copy" data-log="rcLog" onclick="copyLog('rcLog')">📋 Copy</button>
       <div class="log" id="rcLog"></div>
+      <button class="log-copy" onclick="copyLog('rcLog')">📋</button>
     </div>
     <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က browser ထဲမှာပဲ (Full-video mode မှာ Gemini ကို upload လုပ်ပါတယ်)။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
   </div>
@@ -774,6 +775,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261017l"></script>
+<script type="module" src="app-v3.js?v=20261017m"></script>
 </body>
 </html>
