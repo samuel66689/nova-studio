@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016l";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016m";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -20,6 +20,30 @@ document.addEventListener("DOMContentLoaded", () => {
   $("rcRes")?.addEventListener("change", rcApplyLayout);
   $("rcSeriesOn")?.addEventListener("change", (e) => {
     $("rcSeriesBox").style.display = e.target.checked ? "block" : "none";
+    if (e.target.checked) refreshSeriesDropdown();
+  });
+  $("rcSeriesTitleSel")?.addEventListener("change", (e) => {
+    if (e.target.value) $("rcSeriesTitle").value = e.target.value;
+  });
+  $("rcMemView")?.addEventListener("click", () => {
+    const t = ($("rcSeriesTitle").value || "").trim();
+    if (!t) { alert("ခေါင်းစဉ် အရင် ရွေး/ရိုက် ပါ"); return; }
+    $("rcMemText").value = getMemory(t) || "";
+    $("rcMemBox").style.display = $("rcMemBox").style.display === "none" ? "block" : "none";
+  });
+  $("rcMemSave")?.addEventListener("click", () => {
+    const t = ($("rcSeriesTitle").value || "").trim();
+    if (!t) return;
+    saveMemory(t, $("rcMemText").value);
+    refreshSeriesDropdown();
+    alert("Memory သိမ်းပြီးပါပြီ ✅");
+  });
+  $("rcMemDel")?.addEventListener("click", () => {
+    const t = ($("rcSeriesTitle").value || "").trim();
+    if (!t || !confirm(`"${t}" memory ဖျက် မလား?`)) return;
+    delMemory(t);
+    $("rcMemText").value = "";
+    refreshSeriesDropdown();
   });
   rcApplyLayout();
 });
@@ -30,8 +54,8 @@ import {
   idbSet, idbGet, idbDel,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
-  geminiText,
-} from "./js/api.js?v=20261016l";
+  geminiText, extractStoryMemory,
+} from "./js/api.js?v=20261016m";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1043,6 +1067,41 @@ function rcApplyLayout() {
   }
 }
 
+/** Story Memory: localStorage per series title */
+function memKey(title) { return "nova_series_mem_" + title; }
+function getAllSeries() {
+  const out = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith("nova_series_mem_")) out.push(k.slice(16));
+  }
+  return out.sort();
+}
+function getMemory(title) {
+  if (!title) return null;
+  try { return localStorage.getItem(memKey(title)) || null; } catch (_) { return null; }
+}
+function saveMemory(title, text) {
+  if (!title) return;
+  try { localStorage.setItem(memKey(title), text); } catch (_) {}
+}
+function delMemory(title) {
+  if (!title) return;
+  try { localStorage.removeItem(memKey(title)); } catch (_) {}
+}
+function refreshSeriesDropdown() {
+  const sel = $("rcSeriesTitleSel");
+  if (!sel) return;
+  const cur = $("rcSeriesTitle").value;
+  sel.innerHTML = '<option value="">— အသစ် —</option>';
+  for (const t of getAllSeries()) {
+    const o = document.createElement("option");
+    o.value = t; o.textContent = t;
+    if (t === cur) o.selected = true;
+    sel.appendChild(o);
+  }
+}
+
 /** Get series info from UI */
 function getSeriesInfo() {
   if (!($("rcSeriesOn") || {}).checked) return null;
@@ -1056,13 +1115,19 @@ function getSeriesInfo() {
 function seriesPromptExtra() {
   const s = getSeriesInfo();
   if (!s) return "";
+  let extra = "";
+  const mem = getMemory(s.title);
+  if (mem && !s.isEnd) {
+    extra += `\n\nSTORY MEMORY (previous parts of "${s.title}"): \n${mem}\n` +
+      `Use the SAME character names and continue the story consistently.`;
+  }
   if (s.isEnd) {
-    return `\n\nSERIES INFO: This is "${s.title}" — FINAL PART (End). ` +
+    return extra + `\n\nSERIES INFO: This is "${s.title}" — FINAL PART (End). ` +
       `At the end of your recap, add a closing line. ` +
       `If the story is complete, write something like "ဒီဇာတ်လမ်း ဒီမှာ ပြီးစီးပါပြီ". ` +
       `If the story continues (next season), predict what might happen next and add an exciting hook like "နောက် Season မှာ ဘာ ဖြစ် မလဲ? စောင့်ကြည့်ပါ".`;
   }
-  return `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part}. ` +
+  return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part}. ` +
     `Mention the part number naturally in your recap opening if appropriate.`;
 }
 
@@ -1212,6 +1277,20 @@ $("rcFile").addEventListener("change", async (e) => {
       if (sbAuto) sbAuto.style.display = "";
       if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
       if (saved.script) { try { $("rcScript").value = saved.script; } catch (_) {} }
+    // Auto-save story memory if series ON
+    try {
+      const si = getSeriesInfo();
+      if (si && !si.isEnd && segments && segments.length) {
+        log("rc", "📓 Memory ထုတ် နေ ပါ တယ်…");
+        const mem = await extractStoryMemory(segments);
+        if (mem) {
+          const prev = getMemory(si.title);
+          saveMemory(si.title, (prev ? prev + "\n\n" : "") + `[Part ${si.part}]\n` + mem);
+          log("rc", "📓 Memory သိမ်း ပြီးပါ ပြီ ✅", "ok");
+          refreshSeriesDropdown();
+        }
+      }
+    } catch (_) {}
       const bar = document.createElement("div");
       bar.style.cssText = "background:#1a3a2a;border:1px solid #4caf50;border-radius:8px;padding:12px;margin:8px 0;";
       bar.innerHTML = `<div>💾 <b>သိမ်းထားတာ ရှိတယ်</b> (${saved.segments.length} segments, ${new Date(saved.savedAt).toLocaleString()})</div>
