@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017e";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017f";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017e";
+} from "./js/api.js?v=20261017f";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1136,11 +1136,14 @@ function seriesPromptExtra() {
   }
   return extra + `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part} (continuation, NOT the end). ` +
     `STRICT RULES for continuation:` +
-    `\n1. NEVER start with meta-intros like "ဒုတိယပိုင်းမှာ", "အပိုင်း ${s.part} မှာ", "အရင်အပိုင်းမှာ", "In Part ${s.part}".` +
-    `\n2. NEVER greet, summarize previous parts, or announce "this is part X".` +
+    `\n1. NEVER start with ANY meta-intro about episode numbers, previous episodes, or recaps.` +
+    ` Examples of FORBIDDEN openings: "ဒုတိယပိုင်းမှာ", "အပိုင်း ${s.part} မှာ", "အရင်အပိုင်းမှာ",` +
+    ` "ပြီးခဲ့တဲ့အပိုင်းမှာ", "In Part ${s.part}", "previously", or any equivalent.` +
+    `\n2. NEVER greet viewers, summarize previous parts, or announce episode numbers.` +
     `\n3. Start DIRECTLY with the next story event, action, or dialogue — as if the story never paused.` +
-    `\n4. Do NOT repeat Part 1 content unless one brief detail is essential.` +
-    `\n5. Do NOT add "wait for next part" hook at the end. End naturally.`;
+    ` The first sentence must be about what a character DOES, SAYS, or what HAPPENS — not about the episode itself.` +
+    `\n4. Do NOT repeat previous part content unless one brief detail is essential for understanding.` +
+    `\n5. Do NOT add "wait for next part" hook at the end. End naturally when this part's events conclude.`;
 }
 
 /** Wake Lock: keep screen on during recording */
