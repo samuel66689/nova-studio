@@ -568,6 +568,21 @@ export async function extractStoryMemory(segments) {
   } catch (_) { return ""; }
 }
 
+/**
+ * PHASE 1 TIMING CONTRACT
+ * -----------------------
+ * Recap segments use EXPLICIT timeline fields:
+ * - outputStart/outputEnd: position in the OUTPUT narration timeline (seconds).
+ *   The AI generates these as sequential narration timestamps (e.g. 00:00, 00:12).
+ *   These are NOT source-video timestamps.
+ * - sourceStart/sourceEnd: position in the SOURCE/ORIGINAL video (seconds).
+ *   Only set when the generation mode genuinely provides source timestamps.
+ *   Currently most recap modes do NOT provide these — do not guess them.
+ * - audioDuration: measured TTS audio length for this segment (seconds).
+ *
+ * DEPRECATED aliases `start`/`end` are kept for backward compatibility.
+ * They ALWAYS mean output timeline. Do NOT use them to seek source video.
+ */
 export function parseRecapSegments(text) {
   const segs = [];
   // Accept -, –, —, and "00:00 - 00:12" format
@@ -576,14 +591,67 @@ export function parseRecapSegments(text) {
   while ((m = re.exec(text)) !== null) {
     const a = parseClock(m[1]), b = parseClock(m[2]);
     if (a !== null && b !== null && b > a && m[3].trim()) {
-      segs.push({ start: a, end: b, text: m[3].trim() });
+      segs.push({
+        outputStart: a, outputEnd: b,
+        start: a, end: b,  // DEPRECATED alias = output timeline
+        text: m[3].trim(),
+        // sourceStart/sourceEnd intentionally NOT set — unknown
+      });
     }
   }
   return segs;
 }
 
+/**
+ * Validate recap segment timestamps. Returns {ok, errors[]}.
+ * - Checks finite, non-negative, end > start
+ * - If sourceDuration given AND seg has sourceStart/sourceEnd, validates against it
+ * - Does NOT silently clamp, swap, or guess
+ */
+export function validateRecapSegments(segs, opts = {}) {
+  const errors = [];
+  const srcDur = opts.sourceDuration;
+  if (!Array.isArray(segs) || !segs.length) {
+    return { ok: false, errors: ["Segment မရှိပါ"] };
+  }
+  segs.forEach((s, i) => {
+    const n = i + 1;
+    const os = s.outputStart ?? s.start;
+    const oe = s.outputEnd ?? s.end;
+    const chk = (v, name) => {
+      if (v === undefined || v === null || v === "")
+        errors.push(`Segment ${n}: ${name} မရှိပါ`);
+      else if (typeof v !== "number" || !isFinite(v))
+        errors.push(`Segment ${n}: ${name} ဂဏန်း မဟုတ်ပါ (${v})`);
+      else if (v < 0)
+        errors.push(`Segment ${n}: ${name} အနုတ် မရ (${v})`);
+    };
+    chk(os, "outputStart"); chk(oe, "outputEnd");
+    if (typeof os === "number" && typeof oe === "number" && isFinite(os) && isFinite(oe)) {
+      if (oe <= os)
+        errors.push(`Segment ${n}: outputEnd (${fmtClock(oe)}) သည် outputStart (${fmtClock(os)}) ထက် ကြီး ရ မယ်`);
+    }
+    // Source timeline validation — ONLY if source fields are present
+    if (s.sourceStart !== undefined || s.sourceEnd !== undefined) {
+      chk(s.sourceStart, "sourceStart"); chk(s.sourceEnd, "sourceEnd");
+      if (typeof s.sourceStart === "number" && typeof s.sourceEnd === "number" &&
+          isFinite(s.sourceStart) && isFinite(s.sourceEnd) && s.sourceEnd <= s.sourceStart)
+        errors.push(`Segment ${n}: sourceEnd သည် sourceStart ထက် ကြီး ရ မယ်`);
+      if (srcDur && isFinite(srcDur)) {
+        if (typeof s.sourceEnd === "number" && s.sourceEnd > srcDur)
+          errors.push(`Segment ${n}: sourceEnd (${fmtClock(s.sourceEnd)}) သည် video အရှည် (${fmtClock(srcDur)}) ထက် ကျော် နေ`);
+        if (typeof s.sourceStart === "number" && s.sourceStart >= srcDur)
+          errors.push(`Segment ${n}: sourceStart သည် video အရှည် ထက် ကျော် နေ`);
+      }
+    }
+  });
+  return { ok: errors.length === 0, errors };
+}
+
 export function segmentsToSRT(segs) {
-  return segs.map((s, i) =>
-    (i + 1) + "\n" + toSRTTime(s.start) + " --> " + toSRTTime(s.end) + "\n" + s.text + "\n"
-  ).join("\n");
+  return segs.map((s, i) => {
+    const a = s.outputStart ?? s.start ?? 0;
+    const b = s.outputEnd ?? s.end ?? 0;
+    return (i + 1) + "\n" + toSRTTime(a) + " --> " + toSRTTime(b) + "\n" + s.text + "\n";
+  }).join("\n");
 }
