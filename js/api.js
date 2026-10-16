@@ -485,7 +485,15 @@ export async function extractSceneFrames(file, maxFrames, onprog) {
   try {
     await new Promise((res, rej) => {
       v.onloadedmetadata = res;
-      v.onerror = () => rej(new Error("video ဖတ်မရပါ"));
+      v.onerror = () => {
+        // Diagnostic: log file details and video error code (never API keys)
+        const ec = v.error ? v.error.code : "?";
+        const em = v.error ? (v.error.message || "") : "";
+        try {
+          console.warn(`[extractSceneFrames] video load failed: name=${file.name || "?"} type=${file.type || "?"} size=${file.size || "?"} error.code=${ec} ${em}`);
+        } catch (_) {}
+        rej(new Error(`video ဖတ်မရပါ (${file.name || "file"}, type=${file.type || "?"}, code=${ec}) — browser ဒီ format ကို decode မရပါ`));
+      };
     });
     const dur = v.duration || 0;
     const n = Math.max(6, Math.min(maxFrames || 40, Math.floor(dur / 10)));
