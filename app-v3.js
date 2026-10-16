@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261017t";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017r";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017u";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017r";
+} from "./js/api.js?v=20261017u";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -816,7 +816,24 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     // ---- mux with video ----
     muxPhase = "remux-write";
     setProgressHandler((p) => setProgress("rc", 94 + p * 6, "video နဲ့ တွဲနေပါတယ်…"));
-    await ff.writeFile("input.mp4", await fetchFile(rcFile));
+    // Diagnostic: verify file readable before FFmpeg write
+    try {
+      const fsz = rcFile ? rcFile.size : 0;
+      console.log(`[remux-write] file: ${rcFile ? (rcFile.name || "?") : "null"} size=${fsz} type=${rcFile ? (rcFile.type || "?") : "?"}`);
+      if (!rcFile || !fsz) throw new Error("video file မရှိတော့ပါ — ပြန်ရွေးပေးပါ");
+      // Warn if file is very large for mobile memory
+      if (fsz > 500 * 1024 * 1024) {
+        log("rc", `⚠️ Video ကြီးလွန်းပါတယ် (${(fsz/1048576).toFixed(0)}MB) — memory မလောက်နိုင်ပါ`, "err");
+      }
+    } catch (de) { console.warn("[remux-write] pre-check:", de.message); }
+    try {
+      await ff.writeFile("input.mp4", await fetchFile(rcFile));
+    } catch (we) {
+      // Provide clear error instead of cryptic Code=-1
+      const msg = `video file FFmpeg ထဲ ရေးမရပါ: ${(we.message || we).toString().slice(0, 150)} (size=${rcFile ? rcFile.size : "?"})`;
+      log("rc", "❌ " + msg, "err");
+      throw new Error(msg);
+    }
     muxPhase = "remux-exec";
     await ff.exec(["-i", "input.mp4", "-i", "narr.mp3",
       "-map", "0:v:0", "-map", "1:a:0",
