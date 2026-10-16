@@ -1,6 +1,6 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
-import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
+import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261017t";
 import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017r";
 
 // Wake up TTS server (cold start mitigation)
@@ -228,6 +228,19 @@ async function serverEdgeTTS(text, voice) {
     return new Blob([buf], { type: "audio/mpeg" });
   } finally { clearTimeout(timer); }
 }
+
+// Voice fallback: if saved/selected voice is no longer supported (e.g. removed Gemini),
+// fall back to Thiha (default). Preserves valid Nilar selection.
+(function initVoiceDefault() {
+  try {
+    const sel = document.getElementById("rcVoice");
+    if (!sel) return;
+    const v = sel.value || "";
+    if (v.startsWith("gemini:") || (v !== "my-MM-NilarNeural" && v !== "my-MM-ThihaNeural")) {
+      sel.value = "my-MM-ThihaNeural";
+    }
+  } catch (_) {}
+})();
 
 // ============================================================
 // TAB 1 — NOVA CUT
@@ -1563,14 +1576,8 @@ $("previewVoice").addEventListener("click", async () => {
   btn.textContent = "⏳…";
   try {
     let blob = null;
-    if (voice.startsWith("gemini:")) {
-      const gKey = (getKeys() || {}).gemini || "";
-      if (!gKey) { alert("Gemini API key အရင်ထည့်ပါ"); return; }
-      blob = await geminiTTS(sample, voice.slice(7), gKey);
-    } else {
-      try { blob = await serverEdgeTTS(sample, voice); }
-      catch (_) { blob = await edgeTTS(sample, voice); }
-    }
+    try { blob = await serverEdgeTTS(sample, voice); }
+    catch (_) { blob = await edgeTTS(sample, voice); }
     if (blob && blob.size > 0) {
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -1849,21 +1856,7 @@ $("startRecap").addEventListener("click", async () => {
 
     // ---- step 4: TTS per segment ----
     setStep("tts", "run");
-    const useGeminiTTS = voice.startsWith("gemini:");
-    const gVoice = useGeminiTTS ? voice.slice(7) : null;
-    const gKey = (getKeys() || {}).gemini || "";
     async function ttsPiece(text) {
-      if (useGeminiTTS) {
-        let b = await geminiTTS(text, gVoice, gKey);
-        if (b && b.type === "audio/wav") {
-          await ff.writeFile("gt.wav", await fetchFile(b));
-          await ff.exec(["-i", "gt.wav", "-c:a", "libmp3lame", "-b:a", "128k", "gt.mp3"]);
-          const gd = await ff.readFile("gt.mp3");
-          b = new Blob([gd], { type: "audio/mpeg" });
-          try { await ff.deleteFile("gt.wav"); await ff.deleteFile("gt.mp3"); } catch (_) {}
-        }
-        return b;
-      }
       try {
         return await serverEdgeTTS(text, voice);
       } catch (e1) {
@@ -1871,7 +1864,7 @@ $("startRecap").addEventListener("click", async () => {
         return await edgeTTS(text, voice);
       }
     }
-    log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (${useGeminiTTS ? "Gemini TTS \u2014 " + gVoice : "server TTS \u2014 " + voice})\u2026`);
+    log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (server TTS \u2014 ${voice})\u2026`);
     const segPieces = segments.map(() => []);
     let ttsFailed = null;
     let ttsDone = 0;
