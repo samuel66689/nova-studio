@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016j";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016k";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -22,13 +22,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 import {
   getKeys, saveKeys, clearKeys,
-  groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
+  groqTranscribe, aaiTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   geminiUploadVideo, geminiRecapFromVideoFile,
   idbSet, idbGet, idbDel,
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText,
-} from "./js/api.js?v=20261015f";
+} from "./js/api.js?v=20261016k";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -101,6 +101,7 @@ document.querySelectorAll(".tab-btn").forEach((btn) => {
 (function initKeys() {
   const k = getKeys();
   $("groqKey").value = k.groq;
+  $("aaiKey").value = k.aai || "";
   $("geminiKey").value = k.gemini;
   updateKeyStatus();
 })();
@@ -108,12 +109,13 @@ function updateKeyStatus() {
   const k = getKeys();
   const parts = [];
   if (k.groq) parts.push("Groq ✅"); else parts.push("Groq ❌");
+  if (k.aai) parts.push("AAI ✅"); else parts.push("AAI ❌");
   if (k.gemini) parts.push("Gemini ✅"); else parts.push("Gemini ❌");
   $("keyStatus").textContent = parts.join(" · ") +
     (k.groq && k.gemini ? " — အဆင်သင့်ပါပြီ" : " — လိုအပ်တဲ့ key ထည့်ပါ");
 }
 $("saveKeys").addEventListener("click", () => {
-  saveKeys($("groqKey").value, $("geminiKey").value);
+  saveKeys($("groqKey").value, $("geminiKey").value, $("aaiKey").value);
   updateKeyStatus();
   alert("Keys တွေ သိမ်းပြီးပါပြီ ✅");
 });
@@ -121,6 +123,7 @@ $("clearKeys").addEventListener("click", () => {
   if (!confirm("Keys တွေ ဖျက်မှာလား?")) return;
   clearKeys();
   $("groqKey").value = "";
+  $("aaiKey").value = "";
   $("geminiKey").value = "";
   updateKeyStatus();
 });
@@ -1344,20 +1347,32 @@ $("startRecap").addEventListener("click", async () => {
       const cblob = new Blob([cdata], { type: "audio/mpeg" });
       setProgress("rc", 30 + ((i + 0.5) / nChunks) * 25,
         `transcribe လုပ်နေပါတယ်… (${i + 1}/${nChunks})`);
-      let segs = null, err1 = null;
+      let segs = null, errs = [];
       try {
         segs = await groqTranscribe(cblob, lang);
         log("rc", `အပိုင်း ${i + 1}: Groq ရပါပြီ (${segs.length} ကြောင်း)`, "ok");
       } catch (e) {
-        err1 = e;
-        log("rc", `အပိုင်း ${i + 1}: Groq မရပါ (${e.message}) — Gemini နဲ့ စမ်းပါမယ်…`, "err");
+        errs.push("Groq: " + e.message);
+        log("rc", `အပိုင်း ${i + 1}: Groq မရပါ — AssemblyAI စမ်းပါမယ်…`, "err");
+      }
+      if (!segs) {
+        try {
+          const aaiKey = (getKeys().aai || "").trim();
+          if (!aaiKey) throw new Error("Assembly AI key မရှိပါ");
+          segs = await aaiTranscribe(cblob, aaiKey);
+          log("rc", `အပိုင်း ${i + 1}: AssemblyAI ရပါပြီ (${segs.length} ကြောင်း)`, "ok");
+        } catch (e) {
+          errs.push("AAI: " + e.message);
+          log("rc", `အပိုင်း ${i + 1}: AssemblyAI မရပါ — Gemini စမ်းပါမယ်…`, "err");
+        }
       }
       if (!segs) {
         try {
           segs = await geminiTranscribe(cblob);
           log("rc", `အပိုင်း ${i + 1}: Gemini ရပါပြီ`, "ok");
         } catch (e2) {
-          throw new Error(`transcribe မအောင်မြင်ပါ (အပိုင်း ${i + 1}): ` + (err1 ? err1.message : e2.message));
+          errs.push("Gemini: " + e2.message);
+          throw new Error(`transcribe မအောင်မြင်ပါ (အပိုင်း ${i + 1}): ` + errs.join(" | "));
         }
       }
       for (const s of segs) allSegs.push({ start: s.start + start, end: s.end + start, text: s.text });
