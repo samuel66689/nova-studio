@@ -105,9 +105,10 @@ export async function canvasExport(videoBlob, opts = {}) {
   canvas.height = height;
   const ctx = canvas.getContext("2d");
 
-  // Calculate draw dimensions (cover fit)
+  // Calculate draw dimensions (cover or contain)
   const vw = video.videoWidth, vh = video.videoHeight;
-  const scale = Math.max(width / vw, height / vh);
+  const fit = (opts && opts.fit) || "cover";
+  const scale = fit === "contain" ? Math.min(width / vw, height / vh) : Math.max(width / vw, height / vh);
   const dw = vw * scale, dh = vh * scale;
   const dx = (width - dw) / 2, dy = (height - dh) / 2;
 
@@ -198,7 +199,8 @@ export async function canvasExport(videoBlob, opts = {}) {
     }
   };
 
-  // Start
+  // Start (measure actual recording time for duration patch)
+  const _recT0 = performance.now();
   rec.start(1000);
   if (audioEl) {
     try { await audioEl.play(); } catch (_) {}
@@ -220,7 +222,7 @@ export async function canvasExport(videoBlob, opts = {}) {
   if (audioEl) URL.revokeObjectURL(audioEl.src);
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur, recSec: (performance.now() - _recT0) / 1000 };
 }
 
 /** Draw blur boxes: copies region, blurs it. */
@@ -256,10 +258,16 @@ function subtitleAnchor(W, H, blur, flip, mode) {
 }
 
 /** Unified scene renderer: video -> blur -> subtitle -> logo */
+// Temp canvas for blur background
+const _blurTmp = document.createElement("canvas");
 function drawScene(ctx, W, H, S, zoom = 1) {
   const zw = S.dw * zoom, zh = S.dh * zoom;
   const rx = (W - zw) / 2, ry = (H - zh) / 2;
   ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+  // Fit mode: draw blurred background first
+  if (S.fit === "contain") {
+    drawBlurBg(ctx, S.video, W, H, _blurTmp);
+  }
   ctx.save();
   if (S.flip) { ctx.translate(W, 0); ctx.scale(-1, 1); }
   ctx.drawImage(S.video, rx, ry, zw, zh);
@@ -305,7 +313,8 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext("2d");
   const vw = video.videoWidth, vh = video.videoHeight;
-  const scale = Math.max(width / vw, height / vh);
+  const _fit = (typeof opts !== "undefined" && opts.fit) || "cover";
+  const scale = _fit === "contain" ? Math.min(width / vw, height / vh) : Math.max(width / vw, height / vh);
   const dw = vw * scale, dh = vh * scale;
   const dx = (width - dw) / 2, dy = (height - dh) / 2;
 
@@ -364,6 +373,7 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
     if (onprog) { try { onprog(t / dur); } catch (_) {} }
   };
 
+  const _recT0 = performance.now();
   rec.start(1000);
   await video.play();
 
@@ -416,7 +426,7 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   try { await actx.close(); } catch (_) {}
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur };
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: dur, recSec: (performance.now() - _recT0) / 1000 };
 }
 
 /** Draw styled subtitle with user options. */
@@ -527,12 +537,13 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const ctx = canvas.getContext("2d");
 
   const vw = video.videoWidth, vh = video.videoHeight;
-  const scale = Math.max(width / vw, height / vh);
+  const _fit = (typeof opts !== "undefined" && opts.fit) || "cover";
+  const scale = _fit === "contain" ? Math.min(width / vw, height / vh) : Math.max(width / vw, height / vh);
   const dw = vw * scale, dh = vh * scale;
   const dx = (width - dw) / 2, dy = (height - dh) / 2;
 
   // Unified scene state
-  const S = { video, dw, dh, flip, blur: blurRegions, wm: watermarkText,
+  const S = { video, dw, dh, fit: _fit || "cover", flip, blur: blurRegions, wm: watermarkText,
     t: 0, text: "",
     sub: { on: subOn, color: subColor, size: subSize, font: subFont,
            shadeColor, thickness: shadeThick, pos: subPos },
@@ -580,6 +591,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
 
   // drawFrame replaced by drawScene (unified)
 
+  const _recT0 = performance.now();
   rec.start(1000);
   let elapsed = 0;
 
@@ -658,5 +670,5 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   try { await actx.close(); } catch (_) {}
 
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur };
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur, recSec: (performance.now() - _recT0) / 1000 };
 }
