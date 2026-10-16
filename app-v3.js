@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017a";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017b";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017a";
+} from "./js/api.js?v=20261017b";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1203,9 +1203,12 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           audioDuration: s.audioDuration,
         };
       });
-      // PHASE 1: Validate timestamps before export
+      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+      // timestamps are never compared against source duration.
       {
-        const v = validateRecapSegments(segsWithAudio);
+        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
         if (!v.ok) {
           const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
           log("rc", msg, "err");
@@ -1246,9 +1249,12 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           audioDuration: s.audioDuration,
         };
       });
-      // PHASE 1: Validate timestamps before export
+      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+      // timestamps are never compared against source duration.
       {
-        const v = validateRecapSegments(segsWithAudio);
+        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
         if (!v.ok) {
           const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
           log("rc", msg, "err");
@@ -1732,9 +1738,12 @@ $("startRecap").addEventListener("click", async () => {
           audioDuration: s.audioDuration,
         };
       });
-      // PHASE 1: Validate timestamps before export
+      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+      // timestamps are never compared against source duration.
       {
-        const v = validateRecapSegments(segsWithAudio);
+        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
         if (!v.ok) {
           const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
           log("rc", msg, "err");
@@ -1779,9 +1788,12 @@ $("startRecap").addEventListener("click", async () => {
           audioDuration: s.audioDuration,
         };
       });
-      // PHASE 1: Validate timestamps before export
+      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+      // timestamps are never compared against source duration.
       {
-        const v = validateRecapSegments(segsWithAudio);
+        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
         if (!v.ok) {
           const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
           log("rc", msg, "err");
