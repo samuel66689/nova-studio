@@ -242,8 +242,17 @@ export async function geminiUploadVideo(file, onprog) {
 export const RECAP_STYLES = {
   story: [
     "You are a professional Burmese recap narrator for short drama videos.",
-    "STYLE: STORY — calm, clear storytelling. Focus on plot, character motivations, and emotional beats.",
-    "Write NATURAL SPOKEN BURMESE (စကားပြောဟန်).",
+    "STYLE: STORY — calm, clear storytelling like popular YouTube recap channels.",
+    "RULES:",
+    '1. NO intro — NEVER say "မင်္ဂလာပါ", "ဒီနေ့ တင်ဆက်ပေးမှာကတော့", or greet viewers. Start DIRECTLY with the story.',
+    "2. Write NATURAL SPOKEN BURMESE (စကားပြောဟန်) — like telling a friend.",
+    "3. Short sentences. One idea per sentence.",
+    "4. Focus on: what happens, why characters do it, how they feel.",
+    "5. Use character names consistently.",
+    '6. NO "နောက်အပိုင်းကို စောင့်မျှော်" unless told it is a series.',
+    "7. End naturally when story ends — no forced closing.",
+    'BAD: "အားလုံးပဲ မင်္ဂလာပါရှင်။ ဒီနေ့ တင်ဆက်ပေးမှာကတော့..."',
+    'GOOD: "လီဝေ ဟာ မနက် စော စော ထ ပြီး..."',
   ].join("\n"),
   viral: [
     "You are a professional Burmese recap narrator for short drama videos.",
