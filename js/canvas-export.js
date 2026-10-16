@@ -600,10 +600,19 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   rec.start(1000);
   let elapsed = 0;
 
+  // Diagnostic: log timeline summary
+  try {
+    const totalAudio = segData.reduce((a, s) => a + (s.audioDur || 0), 0);
+    console.log(`[recap-sync] ${segData.length} segments, total audio ${totalAudio.toFixed(1)}s`);
+  } catch (_) {}
+
   for (let i = 0; i < segData.length; i++) {
     const s = segData[i];
-    const c = Math.max(0.5, s.end - s.start); // video clip duration
-    const d = s.audioDur; // audio duration
+    const c = Math.max(0.5, (s.outputEnd ?? s.end) - (s.outputStart ?? s.start)); // narration target duration
+    const d = s.audioDur; // actual audio duration
+    try {
+      console.log(`[recap-sync] seg ${i}: out=${(s.outputStart ?? s.start).toFixed(1)}-${(s.outputEnd ?? s.end).toFixed(1)}s, audio=${(d||0).toFixed(1)}s, src=${s.sourceStart !== undefined ? s.sourceStart.toFixed(1) + "-" + s.sourceEnd.toFixed(1) : "n/a"}, video@${video.currentTime.toFixed(1)}s`);
+    } catch (_) {}
 
     if (onprog) { try { onprog(elapsed / totalDur, i, segData.length); } catch (_) {} }
 
