@@ -34,12 +34,29 @@ export function toSRTTime(sec) {
   return pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "," + String(ms).padStart(3, "0");
 }
 
+/**
+ * Parse "MM:SS" or "HH:MM:SS" to seconds. Returns null for anything invalid.
+ * - MM:SS → seconds must be 00-59 (rejects "00:75")
+ * - HH:MM:SS → minutes and seconds must be 00-59 (rejects "01:70:00")
+ * - Rejects negative ("-1:30"), non-numeric ("ab:cd"), empty parts ("1::30"),
+ *   wrong part counts, decimals, and surrounding garbage.
+ * - Hours/minutes (leading part) may be any non-negative integer ("75:00" ok).
+ */
 export function parseClock(str) {
-  const p = String(str).split(":").map(Number);
-  if (p.some(isNaN)) return null;
-  if (p.length === 2) return p[0] * 60 + p[1];
-  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];
-  return null;
+  const s = String(str == null ? "" : str).trim();
+  if (!s) return null;
+  const parts = s.split(":");
+  if (parts.length !== 2 && parts.length !== 3) return null;
+  if (!parts.every((p) => /^\d+$/.test(p))) return null;
+  const nums = parts.map(Number);
+  if (parts.length === 2) {
+    const [m, sec] = nums;
+    if (sec > 59) return null;
+    return m * 60 + sec;
+  }
+  const [h, m, sec] = nums;
+  if (m > 59 || sec > 59) return null;
+  return h * 3600 + m * 60 + sec;
 }
 
 export function mediaDuration(blob) {
