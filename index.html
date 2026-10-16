@@ -389,9 +389,11 @@ button.ghost:active { border-color: var(--acc); }
 <div class="settings-drawer">
   <div class="settings-card">
     <h2>⚙️ API Keys</h2>
-    <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — console.groq.com)</span></label>
+    <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — <a href="https://console.groq.com" target="_blank" style="color:var(--acc)">console.groq.com</a> → API Keys → Create)</span></label>
     <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off">
-    <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — aistudio.google.com)</span></label>
+    <label>Assembly AI Key <span style="color:var(--dim)">(Groq မရရင် fallback — VPN နဲ့ရ — <a href="https://www.assemblyai.com/dashboard/signup" target="_blank" style="color:var(--acc)">assemblyai.com</a> → Sign up → API key copy)</span></label>
+    <input type="password" id="aaiKey" placeholder="..." autocomplete="off">
+    <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — <a href="https://aistudio.google.com" target="_blank" style="color:var(--acc)">aistudio.google.com</a> → Get API Key)</span></label>
     <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off">
     <div class="btn-row">
       <button id="saveKeys">💾 သိမ်းမယ်</button>
@@ -681,7 +683,7 @@ button.ghost:active { border-color: var(--acc); }
 
     <ol class="steps" id="rcSteps">
       <li data-step="audio">1️⃣ အသံခွဲထုတ်မယ် (browser)</li>
-      <li data-step="transcribe">2️⃣ စာသားပြောင်းမယ် — Groq Whisper (မရရင် Gemini)</li>
+      <li data-step="transcribe">2️⃣ စာသားပြောင်းမယ် — Groq → Assembly → Gemini</li>
       <li data-step="script">3️⃣ Recap script ရေးမယ် — Gemini</li>
       <li data-step="tts">4️⃣ အသံထွက်မယ် — Server TTS</li>
       <li data-step="mux">5️⃣ Video နဲ့ တွဲမယ် + SRT ထုတ်မယ်</li>
@@ -722,6 +724,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261016j"></script>
+<script type="module" src="app-v3.js?v=20261016k"></script>
 </body>
 </html>
