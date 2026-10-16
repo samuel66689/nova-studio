@@ -542,6 +542,25 @@ button.ghost:active { border-color: var(--acc); }
         </select>
       </div>
     </div>
+    <div style="margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:10px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="rcSeriesOn" style="width:18px;height:18px;">
+        <span>📺 အပိုင်းဆက် Series</span>
+      </label>
+      <div id="rcSeriesBox" style="display:none;margin-top:8px;">
+        <div style="display:flex;gap:8px;">
+          <div style="flex:2;">
+            <label>ခေါင်းစဉ်</label>
+            <input type="text" id="rcSeriesTitle" placeholder="ဥပမာ: လီဝေရဲ့ချစ်ခြင်း" style="width:100%;">
+          </div>
+          <div style="flex:1;">
+            <label>အပိုင်း (ဆုံး ရင် "end" ရေး)</label>
+            <input type="text" id="rcSeriesPart" placeholder="1" style="width:100%;">
+          </div>
+        </div>
+        <div class="hint">နောက်ဆုံးပိုင်း ဆို အပိုင်းမှာ "end" လို့ ရေး — AI က hook ခန့်မှန်း ပေး မယ်</div>
+      </div>
+    </div>
 
     <div class="row">
       <div>
@@ -724,6 +743,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261016k"></script>
+<script type="module" src="app-v3.js?v=20261016l"></script>
 </body>
 </html>
