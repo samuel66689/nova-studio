@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016k";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016l";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -18,6 +18,9 @@ document.addEventListener("DOMContentLoaded", () => {
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
   $("rcRes")?.addEventListener("change", rcApplyLayout);
+  $("rcSeriesOn")?.addEventListener("change", (e) => {
+    $("rcSeriesBox").style.display = e.target.checked ? "block" : "none";
+  });
   rcApplyLayout();
 });
 import {
@@ -28,7 +31,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText,
-} from "./js/api.js?v=20261016k";
+} from "./js/api.js?v=20261016l";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1040,6 +1043,29 @@ function rcApplyLayout() {
   }
 }
 
+/** Get series info from UI */
+function getSeriesInfo() {
+  if (!($("rcSeriesOn") || {}).checked) return null;
+  const title = (($("rcSeriesTitle") || {}).value || "").trim();
+  const part = (($("rcSeriesPart") || {}).value || "").trim();
+  if (!title) return null;
+  const isEnd = part.toLowerCase() === "end";
+  return { title, part: isEnd ? "End" : part, isEnd };
+}
+/** Build series prompt addition */
+function seriesPromptExtra() {
+  const s = getSeriesInfo();
+  if (!s) return "";
+  if (s.isEnd) {
+    return `\n\nSERIES INFO: This is "${s.title}" — FINAL PART (End). ` +
+      `At the end of your recap, add a closing line. ` +
+      `If the story is complete, write something like "ဒီဇာတ်လမ်း ဒီမှာ ပြီးစီးပါပြီ". ` +
+      `If the story continues (next season), predict what might happen next and add an exciting hook like "နောက် Season မှာ ဘာ ဖြစ် မလဲ? စောင့်ကြည့်ပါ".`;
+  }
+  return `\n\nSERIES INFO: This is "${s.title}" — Part ${s.part}. ` +
+    `Mention the part number naturally in your recap opening if appropriate.`;
+}
+
 /** Wake Lock: keep screen on during recording */
 let _wakeLock = null;
 async function acquireWakeLock() {
@@ -1439,7 +1465,7 @@ $("startRecap").addEventListener("click", async () => {
           setProgress("rc", 52 + Math.min(i, 10), `video process စောင့်နေပါတယ်…`));
         setProgress("rc", 62, "AI က video ကြည့်ပြီး script ရေးနေပါတယ်…");
         log("rc", `🎬 video အပြည့် + style (${rcStyle}) နဲ့ script ရေးနေပါတယ်…`);
-        segments = await geminiRecapFromVideoFile(fileUri, rcStyle);
+        segments = await geminiRecapFromVideoFile(fileUri, rcStyle, seriesPromptExtra());
         log("rc", `video-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
       } catch (e) {
         log("rc", `full video မအောင်မြင်ပါ (${e.message}) — frames နဲ့ ဆက်လုပ်ပါမယ်…`, "err");
@@ -1455,7 +1481,7 @@ $("startRecap").addEventListener("click", async () => {
         if (frames.length >= 4) {
           setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
           log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
-          segments = await geminiRecapScriptVision(frames, transcriptText);
+          segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra());
           log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
         } else {
           log("rc", "scene ထုတ်မရပါ — စာသားနဲ့ပဲ ဆက်လုပ်ပါမယ်…", "err");
@@ -1467,7 +1493,7 @@ $("startRecap").addEventListener("click", async () => {
     if (!segments || !segments.length) {
       setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
       log("rc", "3️⃣ Gemini က recap script ရေးနေပါတယ်…");
-      segments = await geminiRecapScript(transcriptText);
+      segments = await geminiRecapScript(transcriptText, seriesPromptExtra());
     }
     $("rcScript").value = segments.map((s) =>
       `[${fmtClock(s.start)}-${fmtClock(s.end)}] ${s.text}`).join("\n");
