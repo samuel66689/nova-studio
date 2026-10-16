@@ -283,7 +283,7 @@ export async function geminiRecapFromVideoFile(fileUri, style) {
           { fileData: { mimeType: "video/mp4", fileUri } },
           { text: "Watch this video completely and write the Burmese recap narration." },
         ]}],
-        generationConfig: { temperature: 0.8, maxOutputTokens: 8192 },
+        generationConfig: { temperature: 0.8, maxOutputTokens: 16384 },
         systemInstruction: { parts: [{ text: systemText }] },
       };
       const res = await fetch(
@@ -317,7 +317,7 @@ export async function geminiTranscribe(mp3Blob) {
       { text: "Transcribe this audio completely. Output ONLY lines in this exact format, one per line:\n[MM:SS] transcribed text\nUse the timestamp of when each line starts. No other commentary." },
       { inlineData: { mimeType: "audio/mpeg", data: b64 } },
     ]}],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+    generationConfig: { temperature: 0.2, maxOutputTokens: 16384 },
   };
   let res = null, terr = null;
   for (const m of ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]) {
@@ -496,7 +496,8 @@ export async function geminiRecapScript(transcriptText) {
 
 export function parseRecapSegments(text) {
   const segs = [];
-  const re = /\[(\d{1,3}:\d{2}(?::\d{2})?)-(\d{1,3}:\d{2}(?::\d{2})?)\]\s*(.+)/g;
+  // Accept -, –, —, and "00:00 - 00:12" format
+  const re = /\[?(\d{1,3}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,3}:\d{2}(?::\d{2})?)\]?\s*(.+)/g;
   let m;
   while ((m = re.exec(text)) !== null) {
     const a = parseClock(m[1]), b = parseClock(m[2]);
