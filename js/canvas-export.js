@@ -1,9 +1,6 @@
 // canvas-export.js — Canvas + MediaRecorder video export (no ffmpeg.wasm memory crash)
 // Renders video with effects frame-by-frame, records in real-time.
 
-/**
- * Export video with effects via canvas.
-
 const RATIOS = { "9:16": [9,16], "16:9": [16,9], "1:1": [1,1], "4:5": [4,5], "3:4": [3,4] };
 export const BITRATE = { 480: 2e6, 720: 4e6, 1080: 8e6 };
 const even = (n) => Math.round(n / 2) * 2;
@@ -13,6 +10,8 @@ export function getOutDims(ratio, res, vw, vh) {
   return { W: even(W), H: even(H), k: even(W) / 720 };
 }
 
+/**
+ * Export video with effects via canvas.
  * @param {Blob} videoBlob - input video
  * @param {Object} opts - {flip, watermarkText, subtitles: [{start,end,text}], width, height, onprog}
  * @returns {Promise<Blob>} - recorded video blob (webm or mp4)
