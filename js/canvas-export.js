@@ -510,6 +510,11 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
+  // PHASE 1 NOTE: segments use outputStart/outputEnd (narration timeline).
+  // sourceStart/sourceEnd are NOT set by current recap modes.
+  // The seek below (video.currentTime = s.start) uses OUTPUT time as source seek
+  // — this is a known Phase 1 limitation, fixed in Phase 3. Do not silently change it here.
+  // Timestamp validation happens in app-v3.js before calling this function.
   // Preload font for canvas
   try {
     await document.fonts.load(`bold ${subSize}px "${subFont}"`);
