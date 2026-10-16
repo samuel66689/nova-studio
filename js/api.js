@@ -301,7 +301,8 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", o
     "4. ONLY describe what is actually visible or spoken in the video — never invent.",
     "5. Do NOT add unnecessary dramatic/florid words.",
     "6. Output ONLY segment lines, one per line, in this EXACT format:",
-    "[00:00-00:12] narration text here",
+    "[SRC 03:10-03:25] narration text here",
+    "6b. The [SRC start-end] MUST be source-video timestamps — which scene this narration describes.",
     "7. Each segment must be 5 to 12 seconds of spoken narration.",
     "8. The LAST segment may end with a short teaser hook for the next episode.",
     "9. No Chinese, Thai or Latin characters — except brand/person names (transliterate rest).",
@@ -393,11 +394,12 @@ const RECAP_SYSTEM = [
   "3. ONLY describe what is in the transcript — never invent events or details.",
   "4. Do NOT add unnecessary dramatic/florid words — keep the language natural and direct.",
   "5. Output ONLY segment lines, one per line, in this EXACT format:",
-  "[00:00-00:12] narration text here",
-  "[00:12-00:25] narration text here",
-  "6. Each segment must be 5 to 12 seconds of spoken narration.",
-  "7. The LAST segment may end with a short teaser hook for the next episode (one sentence).",
-  "8. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
+  "[SRC 03:10-03:25] narration text here",
+  "[SRC 03:25-03:40] narration text here",
+  "6. The [SRC start-end] timestamps MUST be from the transcript timestamps — they tell which source-video scene this narration describes.",
+  "7. Each segment must be 5 to 12 seconds of spoken narration.",
+  "8. The LAST segment may end with a short teaser hook for the next episode (one sentence).",
+  "9. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
   "9. No intro, no markdown, no numbering — only the segment lines.",
 ].join("\n");
 
@@ -432,8 +434,9 @@ const RECAP_VISION_SYSTEM = [
   "5. Do NOT add unnecessary dramatic/florid words — keep the language natural and direct.",
   "6. You MAY quote a short real spoken line from the transcript when it is impactful — never invent dialogue that is not in the transcript.",
   "7. Output ONLY segment lines, one per line, in this EXACT format:",
-  "[00:00-00:12] narration text here",
-  "[00:12-00:25] narration text here",
+  "[SRC 03:10-03:25] narration text here",
+  "[SRC 03:25-03:40] narration text here",
+  "7b. The [SRC start-end] MUST be source-video timestamps from the transcript/frames.",
   "8. Each segment must be 5 to 12 seconds of spoken narration.",
   "9. The LAST segment may end with a short teaser hook for the next episode (one sentence).",
   "10. No Chinese, Thai or Latin characters in the output — except well-known brand names and real person names (transliterate everything else into Burmese).",
@@ -651,6 +654,8 @@ export function validateRecapSegments(segs, opts = {}) {
     const n = i + 1;
     const os = s.outputStart ?? s.start;
     const oe = s.outputEnd ?? s.end;
+    const hasOutput = os !== undefined && os !== null && os !== "";
+    const hasSource = s.sourceStart !== undefined || s.sourceEnd !== undefined;
     const chk = (v, name) => {
       if (v === undefined || v === null || v === "")
         errors.push(`Segment ${n}: ${name} မရှိပါ`);
@@ -659,7 +664,10 @@ export function validateRecapSegments(segs, opts = {}) {
       else if (v < 0)
         errors.push(`Segment ${n}: ${name} အနုတ် မရ (${v})`);
     };
-    chk(os, "outputStart"); chk(oe, "outputEnd");
+    // Phase 2/3: output timeline optional if source timeline present
+    // (output calculated later from audio durations)
+    if (hasOutput) { chk(os, "outputStart"); chk(oe, "outputEnd"); }
+    else if (!hasSource) errors.push(`Segment ${n}: outputStart/outputEnd သို့မဟုတ် sourceStart/sourceEnd တခု လို`);
     if (typeof os === "number" && typeof oe === "number" && isFinite(os) && isFinite(oe)) {
       if (oe <= os)
         errors.push(`Segment ${n}: outputEnd (${fmtClock(oe)}) သည် outputStart (${fmtClock(os)}) ထက် ကြီး ရ မယ်`);
@@ -692,35 +700,36 @@ export function parseRecapSegmentsStrict(text) {
   const segments = [];
   const errors = [];
   const lines = (text || "").split("\n");
-  // Lenient regex (same as parseRecapSegments)
-  const re = /\[?(\d{1,3}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,3}:\d{2}(?::\d{2})?)\]?\s*(.+)/;
-  // Detects a line that TRIED to be a segment (has brackets or time-like pattern)
+  // Phase 2: [SRC 03:10-03:25] = source-video timestamps (preferred)
+  const reSrc = /\[SRC\s+(\d{1,3}:\d{2}(?::\d{2})?)\s*[-\u2013\u2014]\s*(\d{1,3}:\d{2}(?::\d{2})?)\]\s*(.+)/i;
+  // Legacy: [00:00-00:12] = output timeline (no source info)
+  const reLegacy = /\[?(\d{1,3}:\d{2}(?::\d{2})?)\s*[-\u2013\u2014]\s*(\d{1,3}:\d{2}(?::\d{2})?)\]?\s*(.+)/;
   const looksLikeSeg = /\[|\d{1,4}:\d{2}/;
   lines.forEach((ln, idx) => {
     const lineNo = idx + 1;
     const t = ln.trim();
-    if (!t) return; // empty line: ignore
-    const m = t.match(re);
+    if (!t) return;
+    let m = t.match(reSrc);
     if (m) {
       const a = parseClock(m[1]), b = parseClock(m[2]);
-      if (a === null)
-        errors.push(`Line ${lineNo}: start timestamp "${m[1]}" မမှန်ပါ: "${t.slice(0, 60)}"`);
-      else if (b === null)
-        errors.push(`Line ${lineNo}: end timestamp "${m[2]}" မမှန်ပါ: "${t.slice(0, 60)}"`);
-      else if (b <= a)
-        errors.push(`Line ${lineNo}: end (${m[2]}) သည် start (${m[1]}) ထက် ကြီးရမယ်: "${t.slice(0, 60)}"`);
-      else if (!m[3].trim())
-        errors.push(`Line ${lineNo}: စာသား မရှိပါ: "${t.slice(0, 60)}"`);
-      else
-        segments.push({
-          outputStart: a, outputEnd: b, start: a, end: b,
-          text: m[3].trim(),
-        });
-    } else if (looksLikeSeg.test(t)) {
-      errors.push(`Line ${lineNo}: timestamp format မမှန်ပါ — "[00:00-00:12] စာသား" ပုံစံ သုံးပါ: "${t.slice(0, 60)}"`);
+      if (a === null) errors.push(`Line ${lineNo}: source start "${m[1]}" မမှန်ပါ`);
+      else if (b === null) errors.push(`Line ${lineNo}: source end "${m[2]}" မမှန်ပါ`);
+      else if (b <= a) errors.push(`Line ${lineNo}: source end \u101e\u100a\u103a start \u1011\u1000\u103a \u1000\u103c\u102e\u1038\u101b\u1019\u101a\u103a`);
+      else if (!m[3].trim()) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
+      else segments.push({ sourceStart: a, sourceEnd: b, text: m[3].trim() });
+      return;
     }
-    // else: plain non-segment line (e.g. AI explanation) — ignore silently
-    // only when NO other valid segments exist will caller decide to error
+    m = t.match(reLegacy);
+    if (m) {
+      const a = parseClock(m[1]), b = parseClock(m[2]);
+      if (a === null) errors.push(`Line ${lineNo}: start "${m[1]}" မမှန်ပါ`);
+      else if (b === null) errors.push(`Line ${lineNo}: end "${m[2]}" မမှန်ပါ`);
+      else if (b <= a) errors.push(`Line ${lineNo}: end သည် start ထက် ကြီးရမယ်`);
+      else if (!m[3].trim()) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
+      else segments.push({ outputStart: a, outputEnd: b, start: a, end: b, text: m[3].trim() });
+    } else if (looksLikeSeg.test(t)) {
+      errors.push(`Line ${lineNo}: format မမှန်ပါ`);
+    }
   });
   return { segments, errors };
 }
