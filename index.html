@@ -694,7 +694,7 @@ button.ghost:active { border-color: var(--acc); }
 
     <div class="results" id="rcResults"></div>
     <div class="log" id="rcLog"></div>
-    <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က ဘယ် server မှမတက်ဘူး။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
+    <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က browser ထဲမှာပဲ (Full-video mode မှာ Gemini ကို upload လုပ်ပါတယ်)။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
   </div>
 </section>
 </main>
@@ -722,6 +722,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261016h"></script>
+<script type="module" src="app-v3.js?v=20261016i"></script>
 </body>
 </html>
