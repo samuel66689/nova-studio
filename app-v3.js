@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017f";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261017g";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017f";
+} from "./js/api.js?v=20261017g";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1294,6 +1294,11 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const r3 = dlRow(baseName + "_script.txt", txtBlob);
       $("rcResults").appendChild(r3.row);
       setProgress("rc", 100, "ပြီးပါပြီ ✅");
+      // Log actual vs target (do NOT claim target achieved)
+      try {
+        const actualMin = (recSec || recDur || 0) / 60;
+        log("rc", `📊 Export: ${actualMin.toFixed(1)} မိနစ် (actual)`, actualMin > 0 ? "ok" : "err");
+      } catch (_) {}
       log("rc", "Sync ပြီးပါပြီ ✅", "ok");
       setStep("mux", "done");
     } else {
@@ -1590,6 +1595,7 @@ $("startRecap").addEventListener("click", async () => {
         {
         const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
         const tgtMin = Math.max(1, Math.round(srcMin * 0.5));
+        log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်ရဲ့ တဝက်) [full-video]`);
         segments = await geminiRecapFromVideoFile(fileUri, rcStyle, seriesPromptExtra(), { targetMinutes: tgtMin });
       }
         log("rc", `video-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
@@ -1610,6 +1616,7 @@ $("startRecap").addEventListener("click", async () => {
           {
           const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
           const tgtMin = Math.max(1, Math.round(srcMin * 0.5));
+          log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်ရဲ့ တဝက်) [vision]`);
           segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
         }
           log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
