@@ -18,6 +18,17 @@ export function getOutDims(ratio, res, vw, vh) {
  */
 
 /** Patch MP4 duration by modifying header only (2MB, no full re-encode) */
+/** Draw blurred background (for contain/fit mode) */
+function drawBlurBg(ctx, video, W, H, tmp) {
+  tmp.width = 32; tmp.height = Math.max(2, Math.round(32 * H / W));
+  const t = tmp.getContext("2d");
+  const s = Math.max(tmp.width / video.videoWidth, tmp.height / video.videoHeight);
+  const w = video.videoWidth * s, h = video.videoHeight * s;
+  t.drawImage(video, (tmp.width - w) / 2, (tmp.height - h) / 2, w, h);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(tmp, 0, 0, W, H);
+}
+
 export async function patchMp4Duration(blob, sec) {
   try {
     const HEAD = Math.min(blob.size, 2 << 20);
@@ -214,6 +225,7 @@ export async function canvasExport(videoBlob, opts = {}) {
 
 /** Draw blur boxes: copies region, blurs it. */
 function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions, t) {
+  const k = width / 720;
   for (const r of regions) {
     if (t < (r.t0 || 0) || t > (r.t1 || 9999)) continue;
     const fx = flip ? 1 - r.x - r.w : r.x;
