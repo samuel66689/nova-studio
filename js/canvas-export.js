@@ -310,15 +310,26 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
       const t = video.currentTime;
       drawFrame(t);
       // Trigger audio for segments starting now
+      // Audio Dub Studio method: borrow gap_after, never overlap next
       while (segIdx < segData.length && segData[segIdx].start <= t + 0.1) {
         const s = segData[segIdx];
         const segDur = Math.max(0.5, s.end - s.start);
+        const nextStart = (segIdx + 1 < segData.length) ? segData[segIdx + 1].start : dur;
+        const gapAfter = Math.max(0, nextStart - s.end);
+        const maxPlay = segDur + gapAfter; // never exceed next segment start
         // Speed up audio if too long (max 1.3x)
         if (s.audioDur > segDur) {
           const rate = Math.min(1.3, s.audioDur / segDur);
           try { s.audioEl.playbackRate = rate; } catch (_) {}
         }
+        const playedDur = s.audioDur / (s.audioEl.playbackRate || 1);
         try { s.audioEl.play(); } catch (_) {}
+        // If still too long, stop before next segment (prevent overlap)
+        if (playedDur > maxPlay + 0.05) {
+          const stopMs = Math.max(100, (maxPlay - 0.05) * 1000);
+          const el = s.audioEl;
+          setTimeout(() => { try { el.pause(); } catch (_) {} }, stopMs);
+        }
         segIdx++;
       }
       if (!video.ended && t < dur) {
