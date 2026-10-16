@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync } from "./js/canvas-export.js?v=20261016e";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE } from "./js/canvas-export.js?v=20261016f";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -46,15 +46,19 @@ function fmtSize(bytes) {
   return mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(1) + " MB";
 }
 
-const activeBlobUrls = [];
-function revokeAllUrls() {
-  while (activeBlobUrls.length) {
-    try { URL.revokeObjectURL(activeBlobUrls.pop()); } catch (_) {}
+const tabBlobUrls = { cut: [], edit: [], recap: [] };
+function revokeUrls(tab) {
+  const arr = tabBlobUrls[tab] || [];
+  while (arr.length) {
+    try { URL.revokeObjectURL(arr.pop()); } catch (_) {}
   }
 }
-function dlRow(name, blob, mime) {
+function trackUrl(tab, url) {
+  (tabBlobUrls[tab] = tabBlobUrls[tab] || []).push(url);
+}
+function dlRow(name, blob, mime, tab) {
   const url = URL.createObjectURL(blob);
-  activeBlobUrls.push(url);
+  trackUrl(tab || "recap", url);
   const row = document.createElement("div");
   row.className = "part";
   const s = document.createElement("span");
@@ -146,7 +150,7 @@ $("cutFile").addEventListener("change", async (e) => {
 });
 
 $("startCut").addEventListener("click", async () => {
-  revokeAllUrls();
+  revokeUrls("cut");
   if (!cutFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const minutes = Math.max(1, parseFloat($("cutMinutes").value) || 8);
   const partSec = minutes * 60;
@@ -178,7 +182,7 @@ $("startCut").addEventListener("click", async () => {
       await ff.deleteFile(outName);
       const blob = new Blob([data], { type: "video/mp4" });
       const fname = cutFile.name.replace(/\.[^.]+$/, "") + "_p" + (i + 1) + ".mp4";
-      const { row, anchor } = dlRow(fname, blob, "video/mp4");
+      const { row, anchor } = dlRow(fname, blob, "video/mp4", "cut");
       $("cutResults").appendChild(row);
       anchors.push(anchor);
       log("cut", `အပိုင်း ${i + 1} ပြီးပါပြီ ✅`, "ok");
@@ -505,7 +509,7 @@ $("startEdit").addEventListener("click", async () => {
     const data = await ff.readFile("output.mp4");
     const blob = new Blob([data], { type: "video/mp4" });
     for (const n of ["input.mp4", "subs.srt", "temp.mp4", "output.mp4"]) { try { await ff.deleteFile(n); } catch (_) {} }
-    const { row } = dlRow(baseName + "_edited.mp4", blob);
+    const { row } = dlRow(baseName + "_edited.mp4", blob, null, "edit");
     $("edResults").appendChild(row);
     setProgress("ed", 100, "ပြီးပါပြီ ✅");
     log("ed", "ပြီးပါပြီ ✅" + (dropped.length ? " (ကျော်သွားတာ: " + dropped.join(", ") + ")" : ""), "ok");
@@ -535,11 +539,11 @@ $("canvasExportBtn").addEventListener("click", async () => {
     setProgressHandler((p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"));
     const { blob, ext } = await canvasExport(edFile, {
       flip, watermarkText: wm, subtitles: subs,
-      width: 720, height: 1280,
+      ...getRcDims(),
       onprog: (p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"),
     });
     const baseName = edFileName.replace(/\.[^.]+$/, "");
-    const { row } = dlRow(baseName + "_canvas." + ext, blob);
+    const { row } = dlRow(baseName + "_canvas." + ext, blob, null, "edit");
     $("edResults").appendChild(row);
     setProgress("ed", 100, "ပြီးပါပြီ ✅");
     log("ed", "Canvas export ရပါပြီ ✅ (" + ext.toUpperCase() + ")", "ok");
@@ -583,7 +587,7 @@ $("extractAudio").addEventListener("click", async () => {
     const data = await ff.readFile("audio.mp3");
     const blob = new Blob([data], { type: "audio/mpeg" });
     for (const n of ["input.mp4", "audio.mp3"]) { try { await ff.deleteFile(n); } catch (_) {} }
-    const { row } = dlRow(edFileName.replace(/\.[^.]+$/, "") + ".mp3", blob);
+    const { row } = dlRow(edFileName.replace(/\.[^.]+$/, "") + ".mp3", blob, null, "edit");
     $("edResults").appendChild(row);
     setProgress("ed", 100, "ပြီးပါပြီ ✅");
     log("ed", "MP3 ရပါပြီ ✅", "ok");
@@ -723,7 +727,7 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
           watermarkText: wantWm,
           subtitles: segments,
           ...getStyleOpts(),
-          width: 720, height: 1280,
+          ...getRcDims(),
           onprog: (p) => setProgress("rc", 97 + p * 2, "Edit… " + Math.round(p * 100) + "%"),
         });
         const r4 = dlRow(baseName + "_recap_edited." + ext, editedBlob);
@@ -995,6 +999,18 @@ function getStyleOpts() {
   };
 }
 
+/** Get output dimensions from UI selections */
+function getRcDims() {
+  const ratio = ($("rcRatio") || {}).value || "9:16";
+  const res = parseInt((($("rcRes") || {}).value || "720"), 10);
+  const RATIOS = { "9:16": [9,16], "16:9": [16,9], "1:1": [1,1], "4:5": [4,5], "original": [9,16] };
+  const [a, b] = RATIOS[ratio] || RATIOS["9:16"];
+  const even = (n) => Math.round(n / 2) * 2;
+  const W = a <= b ? res : res * a / b, H = a <= b ? res * b / a : res;
+  const W2 = even(W), H2 = even(H);
+  return { width: W2, height: H2, bitrate: BITRATE[res] || 4e6 };
+}
+
 /** Fix duration metadata via FFmpeg stream-copy remux (for MP4/WebM) */
 async function fixDuration(blob, ext) {
   try {
@@ -1039,7 +1055,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
-        width: 720, height: 1280,
+        ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
@@ -1068,7 +1084,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
-        width: 720, height: 1280,
+        ...getRcDims(),
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
       // Fix WebM duration metadata (for CapCut/editors)
@@ -1211,7 +1227,7 @@ $("previewVoice").addEventListener("click", async () => {
 });
 
 $("startRecap").addEventListener("click", async () => {
-  revokeAllUrls();
+  revokeUrls("recap");
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const lang = $("rcLang").value;
@@ -1510,7 +1526,7 @@ $("startRecap").addEventListener("click", async () => {
       let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
-        width: 720, height: 1280,
+        ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
@@ -1545,7 +1561,7 @@ $("startRecap").addEventListener("click", async () => {
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,
         ...getStyleOpts(),
-        width: 720, height: 1280,
+        ...getRcDims(),
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
       try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
