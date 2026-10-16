@@ -234,7 +234,7 @@ function drawBlurBoxes(ctx, video, dx, dy, dw, dh, width, height, flip, regions,
     const bx = fx * width, by = r.y * height;
     const bw = r.w * width, bh = r.h * height;
     ctx.save();
-    ctx.filter = `blur(${Math.max(2, Math.min(30, r.strength || 15))}px)`;
+    ctx.filter = `blur(${Math.max(2, Math.min(30, r.strength || 40))}px)`;
     // Clip to box and draw video portion blurred
     ctx.beginPath();
     ctx.rect(bx, by, bw, bh);
