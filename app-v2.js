@@ -2,6 +2,9 @@
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
 import { canvasExport, canvasRecapSync, canvasDubSync } from "./js/canvas-export.js?v=20261016e";
+
+// Wake up TTS server (cold start mitigation)
+try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
 import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
@@ -43,8 +46,15 @@ function fmtSize(bytes) {
   return mb >= 1024 ? (mb / 1024).toFixed(2) + " GB" : mb.toFixed(1) + " MB";
 }
 
+const activeBlobUrls = [];
+function revokeAllUrls() {
+  while (activeBlobUrls.length) {
+    try { URL.revokeObjectURL(activeBlobUrls.pop()); } catch (_) {}
+  }
+}
 function dlRow(name, blob, mime) {
   const url = URL.createObjectURL(blob);
+  activeBlobUrls.push(url);
   const row = document.createElement("div");
   row.className = "part";
   const s = document.createElement("span");
@@ -136,6 +146,7 @@ $("cutFile").addEventListener("change", async (e) => {
 });
 
 $("startCut").addEventListener("click", async () => {
+  revokeAllUrls();
   if (!cutFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const minutes = Math.max(1, parseFloat($("cutMinutes").value) || 8);
   const partSec = minutes * 60;
@@ -710,7 +721,8 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
         const { blob: editedBlob, ext } = await canvasExport(vblob, {
           flip: wantFlip,
           watermarkText: wantWm,
-          subtitles: [], // SRT already muxed? No — burn via canvas if needed
+          subtitles: segments,
+          ...getStyleOpts(),
           width: 720, height: 1280,
           onprog: (p) => setProgress("rc", 97 + p * 2, "Edit… " + Math.round(p * 100) + "%"),
         });
@@ -723,16 +735,6 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
     }
 
     rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
-    const handBtn = document.createElement("button");
-    handBtn.className = "ghost";
-    handBtn.textContent = "✏️ Video Editor မှာ ဆက်ပြင်";
-    handBtn.onclick = () => {
-      if (!rcHandoff) return;
-      setEditorInput(rcHandoff.blob, rcHandoff.name);
-      document.querySelector('.tab-btn[data-tab="editor"]').click();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    };
-    $("rcResults").appendChild(handBtn);
 
     const prevWrap = document.createElement("div");
     prevWrap.className = "hint";
@@ -1016,6 +1018,7 @@ async function fixDuration(blob, ext) {
 $("rcSyncOnly")?.addEventListener("click", async () => {
   if (!rcLastRun || !rcLastRun.segPieces) { alert("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  setBusy(["rcSyncOnly", "startRecap"], true);
   const { segments, segPieces, baseName } = rcLastRun;
   setStep("mux", "run");
   try {
@@ -1090,6 +1093,8 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   } catch (e) {
     log("rc", "အမှား: " + (e.message || e), "err");
     setStep("mux", "fail");
+  } finally {
+    setBusy(["rcSyncOnly", "startRecap"], false);
   }
 });
 
@@ -1206,6 +1211,7 @@ $("previewVoice").addEventListener("click", async () => {
 });
 
 $("startRecap").addEventListener("click", async () => {
+  revokeAllUrls();
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const lang = $("rcLang").value;
