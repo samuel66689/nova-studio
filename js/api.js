@@ -746,10 +746,32 @@ export function parseRecapSegmentsStrict(text) {
   return { segments, errors };
 }
 
+/**
+ * Build output timeline from actual audio durations.
+ * Returns new array with outputStart/outputEnd set cumulatively.
+ */
+export function buildOutputTimeline(segs) {
+  let t = 0;
+  return segs.map((s) => {
+    const dur = (typeof s.audioDur === "number" && isFinite(s.audioDur) && s.audioDur > 0)
+      ? s.audioDur
+      : (typeof s.audioDuration === "number" && isFinite(s.audioDuration) && s.audioDuration > 0
+        ? s.audioDuration : 0);
+    const out = { ...s, outputStart: t, outputEnd: t + dur };
+    t = out.outputEnd;
+    return out;
+  });
+}
+
 export function segmentsToSRT(segs) {
   return segs.map((s, i) => {
-    const a = s.outputStart ?? s.start ?? 0;
-    const b = s.outputEnd ?? s.end ?? 0;
+    const a = s.outputStart ?? s.start;
+    const b = s.outputEnd ?? s.end;
+    // Validate: must be finite, non-negative, end > start
+    if (typeof a !== "number" || !isFinite(a) || a < 0 ||
+        typeof b !== "number" || !isFinite(b) || b <= a) {
+      throw new Error(`SRT segment ${i + 1}: invalid timestamps (start=${a}, end=${b})`);
+    }
     return (i + 1) + "\n" + toSRTTime(a) + " --> " + toSRTTime(b) + "\n" + s.text + "\n";
   }).join("\n");
 }
