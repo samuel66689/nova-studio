@@ -568,6 +568,19 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
 
   const totalDur = segData.reduce((sum, s) => sum + s.audioDur, 0);
 
+  // Phase 3: Build output timeline from ACTUAL audio durations.
+  // outputStart/outputEnd = position in final video, calculated cumulatively.
+  // This is separate from sourceStart/sourceEnd (original video positions).
+  let _outT = 0;
+  for (const s of segData) {
+    s.outputStart = _outT;
+    s.outputEnd = _outT + (s.audioDur || 0);
+    _outT = s.outputEnd;
+  }
+  try {
+    console.log(`[phase3] Output timeline: ${segData.length} segs, total ${_outT.toFixed(1)}s`);
+  } catch (_) {}
+
   // Setup recording
   const stream = canvas.captureStream(30);
   // Mix all audio via Web Audio
