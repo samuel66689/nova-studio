@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261015f";
 import { edgeTTS, geminiTTS, previewWithWebSpeech } from "./js/tts.js?v=20261015f";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016h";
+import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261016i";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -552,7 +552,7 @@ $("canvasExportBtn").addEventListener("click", async () => {
       subs = parseSRT(txt);
     }
     setProgressHandler((p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"));
-    const { blob, ext } = await canvasExport(edFile, {
+    const { blob, ext, recSec } = await canvasExport(edFile, {
       flip, watermarkText: wm, subtitles: subs,
       ...getRcDims(),
       onprog: (p) => setProgress("ed", p * 100, "Recording… " + Math.round(p * 100) + "%"),
@@ -737,7 +737,7 @@ async function doRecapMux(ff, segments, segPieces, baseName) {
         const subs = [];
         const srtLines = srt.split("\n");
         // (subtitles already in srt string; parse quickly)
-        const { blob: editedBlob, ext } = await canvasExport(vblob, {
+        const { blob: editedBlob, ext, recSec } = await canvasExport(vblob, {
           flip: wantFlip,
           watermarkText: wantWm,
           subtitles: segments,
@@ -1023,8 +1023,9 @@ let rcSrc = { vw: 576, vh: 1024 };
 function getRcDims() {
   const ratio = ($("rcRatio") || {}).value || "9:16";
   const res = parseInt((($("rcRes") || {}).value || "720"), 10);
+  const fit = ($("rcFit") || {}).value || "cover";
   const { W, H } = getOutDims(ratio, res, rcSrc.vw, rcSrc.vh);
-  return { width: W, height: H, bitrate: BITRATE[res] || 4e6 };
+  return { width: W, height: H, bitrate: BITRATE[res] || 4e6, fit };
 }
 /** Update preview wrapper to match output aspect */
 function rcApplyLayout() {
@@ -1034,6 +1035,19 @@ function rcApplyLayout() {
     w.style.aspectRatio = width + " / " + height;
     w.style.maxWidth = width >= height ? "560px" : "340px";
   }
+}
+
+/** Wake Lock: keep screen on during recording */
+let _wakeLock = null;
+async function acquireWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      _wakeLock = await navigator.wakeLock.request("screen");
+    }
+  } catch (_) {}
+}
+function releaseWakeLock() {
+  try { _wakeLock?.release(); _wakeLock = null; } catch (_) {}
 }
 
 /** Fix duration metadata via FFmpeg stream-copy remux (for MP4/WebM) */
@@ -1087,7 +1101,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
+      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
@@ -1110,14 +1124,14 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
         return { start: s.start, end: s.end, text: s.text, audioBlob };
       });
-      let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
       // Fix WebM duration metadata (for CapCut/editors)
-      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
+      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
@@ -1257,6 +1271,7 @@ $("previewVoice").addEventListener("click", async () => {
 
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
+  acquireWakeLock();
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
   const lang = $("rcLang").value;
@@ -1558,7 +1573,7 @@ $("startRecap").addEventListener("click", async () => {
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
+      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
@@ -1585,7 +1600,7 @@ $("startRecap").addEventListener("click", async () => {
         const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
         return { start: s.start, end: s.end, text: s.text, audioBlob };
       });
-      let { blob: finalBlob, ext, duration: recDur } = await canvasRecapSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
         flip: wantFlip,
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,
@@ -1593,7 +1608,7 @@ $("startRecap").addEventListener("click", async () => {
         ...getRcDims(),
         onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext); } catch (e) { console.warn("duration fix failed", e); }
+      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
       // SRT + script files
       const srt = segmentsToSRT(segments);
       const srtBlob = new Blob([srt], { type: "text/plain" });
