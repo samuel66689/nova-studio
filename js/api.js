@@ -648,6 +648,50 @@ export function validateRecapSegments(segs, opts = {}) {
   return { ok: errors.length === 0, errors };
 }
 
+/**
+ * Gap-2: Strict recap parser — reports malformed timestamp lines explicitly
+ * instead of silently skipping them. Returns {segments, errors}.
+ * - Empty lines are ignored (not errors).
+ * - Lines that look like segment attempts (contain [ ] or timestamp-like text)
+ *   but fail to parse are reported as errors with line numbers.
+ */
+export function parseRecapSegmentsStrict(text) {
+  const segments = [];
+  const errors = [];
+  const lines = (text || "").split("\n");
+  // Lenient regex (same as parseRecapSegments)
+  const re = /\[?(\d{1,3}:\d{2}(?::\d{2})?)\s*[-–—]\s*(\d{1,3}:\d{2}(?::\d{2})?)\]?\s*(.+)/;
+  // Detects a line that TRIED to be a segment (has brackets or time-like pattern)
+  const looksLikeSeg = /\[|\d{1,4}:\d{2}/;
+  lines.forEach((ln, idx) => {
+    const lineNo = idx + 1;
+    const t = ln.trim();
+    if (!t) return; // empty line: ignore
+    const m = t.match(re);
+    if (m) {
+      const a = parseClock(m[1]), b = parseClock(m[2]);
+      if (a === null)
+        errors.push(`Line ${lineNo}: start timestamp "${m[1]}" မမှန်ပါ: "${t.slice(0, 60)}"`);
+      else if (b === null)
+        errors.push(`Line ${lineNo}: end timestamp "${m[2]}" မမှန်ပါ: "${t.slice(0, 60)}"`);
+      else if (b <= a)
+        errors.push(`Line ${lineNo}: end (${m[2]}) သည် start (${m[1]}) ထက် ကြီးရမယ်: "${t.slice(0, 60)}"`);
+      else if (!m[3].trim())
+        errors.push(`Line ${lineNo}: စာသား မရှိပါ: "${t.slice(0, 60)}"`);
+      else
+        segments.push({
+          outputStart: a, outputEnd: b, start: a, end: b,
+          text: m[3].trim(),
+        });
+    } else if (looksLikeSeg.test(t)) {
+      errors.push(`Line ${lineNo}: timestamp format မမှန်ပါ — "[00:00-00:12] စာသား" ပုံစံ သုံးပါ: "${t.slice(0, 60)}"`);
+    }
+    // else: plain non-segment line (e.g. AI explanation) — ignore silently
+    // only when NO other valid segments exist will caller decide to error
+  });
+  return { segments, errors };
+}
+
 export function segmentsToSRT(segs) {
   return segs.map((s, i) => {
     const a = s.outputStart ?? s.start ?? 0;
