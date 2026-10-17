@@ -258,7 +258,8 @@ const server = http.createServer(async (req, res) => {
             gStatus = String(ge.status || "");
             gMsg = String(ge.message || "").slice(0, 120);
           } catch (_) { /* non-JSON response */ }
-          console.log(`[gemini-diag] id=${diagId} model=${model} origin=${diagOrigin.slice(0,15)} http=${gres.status} gcode=${gCode} gstatus=${gStatus} gmsg=${gMsg}`);
+          const diagDur = Date.now() - diagStart;
+          console.log(`[gemini-diag] id=${diagId} model=${model} origin=${diagOrigin.slice(0,15)} http=${gres.status} dur=${diagDur}ms gcode=${gCode} gstatus=${gStatus} gmsg=${gMsg}`);
           // Never log key or full body; forward status + body as-is
           res.writeHead(gres.status, { "Content-Type": "application/json" });
           res.end(text);
@@ -266,8 +267,13 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         // Do not expose internals or key material
         const isAbort = e.name === "AbortError";
-        res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
-        res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
+        const diagDur = Date.now() - (typeof diagStart !== "undefined" ? diagStart : Date.now());
+        // DIAG-ERROR: log timeouts and failures explicitly (no secrets)
+        console.log(`[gemini-diag-error] id=${typeof diagId !== "undefined" ? diagId : "?"} model=${typeof model !== "undefined" ? model : "?"} dur=${diagDur}ms err=${isAbort ? "timeout" : "error"}`);
+        if (!res.writableEnded) {
+          res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
+          res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
+        }
       }
     });
     return;
