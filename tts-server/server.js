@@ -237,6 +237,10 @@ const server = http.createServer(async (req, res) => {
         // DIAG: correlation ID for tracing (temporary)
         const diagId = Math.random().toString(36).slice(2, 10);
         const diagOrigin = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "direct";
+        const diagStart = Date.now();
+        // DIAG-START: log immediately on request receipt (before Google call)
+        // Sanitized: only correlation ID and model name. No keys, prompts, or bodies.
+        console.log(`[gemini-diag-start] id=${diagId} model=${model}`);
         // Log only: model, origin IP prefix, status. NEVER key, headers, or prompt.
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 90000);
@@ -258,7 +262,8 @@ const server = http.createServer(async (req, res) => {
             gStatus = String(ge.status || "");
             gMsg = String(ge.message || "").slice(0, 120);
           } catch (_) { /* non-JSON response */ }
-          console.log(`[gemini-diag] id=${diagId} model=${model} origin=${diagOrigin.slice(0,15)} http=${gres.status} gcode=${gCode} gstatus=${gStatus} gmsg=${gMsg}`);
+          const diagDur = Date.now() - diagStart;
+          console.log(`[gemini-diag] id=${diagId} model=${model} origin=${diagOrigin.slice(0,15)} http=${gres.status} dur=${diagDur}ms gcode=${gCode} gstatus=${gStatus} gmsg=${gMsg}`);
           // Never log key or full body; forward status + body as-is
           res.writeHead(gres.status, { "Content-Type": "application/json" });
           res.end(text);
@@ -266,8 +271,13 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         // Do not expose internals or key material
         const isAbort = e.name === "AbortError";
-        res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
-        res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
+        const diagDur2 = Date.now() - diagStart;
+        // DIAG-ERROR: log timeouts and failures explicitly (no secrets)
+        console.log(`[gemini-diag-error] id=${diagId} model=${model} dur=${diagDur2}ms err=${isAbort ? "timeout" : "error"}`);
+        if (!res.writableEnded) {
+          res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
+          res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
+        }
       }
     });
     return;
