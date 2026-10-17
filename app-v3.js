@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018d";
+} from "./js/api.js?v=20261017k";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -230,7 +230,7 @@ const TTS_SERVER = "https://nova-tts.onrender.com";
 /** Server-side Edge TTS (VPN-proof, native Burmese voices). Resolves to audio/mpeg Blob. */
 async function serverEdgeTTS(text, voice) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 120000);
+  const timer = setTimeout(() => ctrl.abort(), 60000);
   try {
     const res = await fetch(TTS_SERVER + "/api/tts", {
       method: "POST",
@@ -2451,6 +2451,7 @@ $("startRecap").addEventListener("click", async () => {
       log("rc", "💾 သိမ်းပြီးပြီ — refresh လုပ်လည်း ပြန်စရာ မလို", "ok");
     } catch (e) {
       console.warn("idb save failed", e);
+      log("rc", "⚠️ သိမ်းမရပါ — storage ပြည့်နေနိုင်ပါတယ်။ Refresh လုပ်ရင် အသံ ပြန်လုပ်ရမယ်", "err");
     }
 
     // ---- step 5: sync + mux ----
