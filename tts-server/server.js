@@ -217,7 +217,16 @@ const server = http.createServer(async (req, res) => {
       || req.socket.remoteAddress || "unknown";
     if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 500 * 1024) req.destroy(); });
+    req.on("data", (c) => {
+      body += c;
+      if (body.length > 5 * 1024 * 1024) {
+        if (!res.writableEnded) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("request too large (max 5MB)");
+        }
+        req.destroy();
+      }
+    });
     req.on("end", async () => {
       try {
         const data = JSON.parse(body || "{}");
