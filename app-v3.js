@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017u";
+} from "./js/api.js?v=20261017v";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -113,6 +113,22 @@ async function srtFromSegsWithAudio(segsWithAudio, logTab) {
   }
   const timed = buildOutputTimeline(withDur);
   return segmentsToSRT(timed);
+}
+
+/** Stage timing: track durations for diagnostics */
+const _stageTimes = {};
+function stageStart(name) {
+  _stageTimes[name] = Date.now();
+  try { console.log(`[stage] ${name} started`); } catch (_) {}
+}
+function stageEnd(name) {
+  const t0 = _stageTimes[name];
+  if (t0) {
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    try { console.log(`[stage] ${name} completed in ${secs}s`); } catch (_) {}
+    return secs;
+  }
+  return null;
 }
 
 function log(tab, msg, cls) {
@@ -1479,6 +1495,12 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
       $("rcResults").innerHTML = "";
+      // Final validation: ensure output blob is valid before offering download
+      if (!finalBlob || finalBlob.size < 1024) {
+        const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
+        log("rc", "❌ " + msg, "err");
+        throw new Error(msg);
+      }
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
       const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
@@ -1881,6 +1903,7 @@ $("startRecap").addEventListener("click", async () => {
         return await edgeTTS(text, voice);
       }
     }
+    stageStart("tts");
     log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (server TTS \u2014 ${voice})\u2026`);
     const segPieces = segments.map(() => []);
     let ttsFailed = null;
@@ -1950,9 +1973,22 @@ $("startRecap").addEventListener("click", async () => {
         "အထက်က segments တွေတော့ script ထဲမှာ ကျန်ပါတယ်။");
     }
     const totalPieces = segPieces.reduce((a, p) => a + p.length, 0);
-    log("rc", `အသံအားလုံး ရပါပြီ (${segments.length} segments, ${totalPieces} ပိုင်း) ✅`, "ok");
+    const ttsSecs = stageEnd("tts");
+    log("rc", `အသံအားလုံး ရပါပြီ (${segments.length} segments, ${totalPieces} ပိုင်း${ttsSecs ? ", " + ttsSecs + "s" : ""}) ✅`, "ok");
     setStep("tts", "done");
     // Show sync-only button
+    // Validate: ensure all segments have audio before proceeding
+    const missingAudio = [];
+    for (let i = 0; i < segments.length; i++) {
+      const pieces = segPieces[i] || [];
+      const totalSize = pieces.reduce((a, b) => a + (b.size || 0), 0);
+      if (!pieces.length || totalSize === 0) missingAudio.push(i + 1);
+    }
+    if (missingAudio.length) {
+      const msg = `အသံမရှိတဲ့ segments: ${missingAudio.slice(0, 5).join(", ")}${missingAudio.length > 5 ? "..." : ""}`;
+      log("rc", "❌ " + msg, "err");
+      throw new Error(msg);
+    }
     const syncBtn = $("rcSyncOnly");
     if (syncBtn) syncBtn.style.display = "";
     // Persist to IndexedDB (survives refresh — no more wasted API calls)
@@ -2081,6 +2117,12 @@ $("startRecap").addEventListener("click", async () => {
       }
       const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
       const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+      // Final validation: ensure output blob is valid before offering download
+      if (!finalBlob || finalBlob.size < 1024) {
+        const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
+        log("rc", "❌ " + msg, "err");
+        throw new Error(msg);
+      }
       const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
       $("rcResults").appendChild(r1.row);
       const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
