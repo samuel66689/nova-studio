@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018a";
+} from "./js/api.js?v=20261018b";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1547,6 +1547,13 @@ function initPreviewTools() {
     // Avoid double-binding
     if (tools.dataset.bound) return;
     tools.dataset.bound = "1";
+    const label = document.getElementById("rcModeLabel");
+    const labels = {
+      all: "👆 All overlays active",
+      sub: "📝 Subtitle mode — logo/blur won't intercept touches",
+      logo: "🖼️ Logo mode — drag/resize logo",
+      blur: "🟫 Blur mode — add/move/resize blur boxes",
+    };
     tools.addEventListener("click", (e) => {
       const btn = e.target.closest(".rc-tool");
       if (!btn) return;
@@ -1555,6 +1562,7 @@ function initPreviewTools() {
       const tool = btn.dataset.tool;
       wrap.classList.remove("tool-sub", "tool-logo", "tool-blur");
       if (tool !== "all") wrap.classList.add("tool-" + tool);
+      if (label) label.textContent = labels[tool] || labels.all;
     });
   } catch (e) { console.warn("tool tabs failed", e); }
 }
