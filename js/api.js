@@ -243,69 +243,37 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
 /** Gemini Files API: upload video file, returns file URI. */
 export async function geminiUploadVideo(file, onprog) {
   const { gemini } = getKeys();
-  if (!gemini) throw new Error("Gemini API key မထည့်ရသေးပါ");
-  // Step 1: initiate resumable upload
-  const meta = { file: { displayName: file.name || "video.mp4", mimeType: file.type || "video/mp4" } };
-  let res;
+  if (!gemini) throw new Error("Gemini API key not set");
+  // Route through server proxy (US IP) to bypass geo-blocking.
+  // Server handles resumable upload init, byte transfer, and ACTIVE polling.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 400000);
   try {
-    res = await fetch(
-      "https://generativelanguage.googleapis.com/upload/v1beta/files",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": gemini,
-          "X-Goog-Upload-Protocol": "resumable",
-          "X-Goog-Upload-Command": "start",
-          "X-Goog-Upload-Header-Content-Length": String(file.size),
-          "X-Goog-Upload-Header-Content-Type": file.type || "video/mp4",
-        },
-        body: JSON.stringify(meta),
-      }
-    );
+    const res = await fetch("https://nova-tts.onrender.com/api/gemini-upload", {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "x-gemini-key": gemini,
+        "x-file-name": encodeURIComponent(file.name || "video.mp4"),
+        "x-mime-type": file.type || "video/mp4",
+      },
+      body: file,
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error("Video upload failed (" + res.status + "): " + t.slice(0, 120));
+    }
+    const j = await res.json();
+    if (!j.uri) throw new Error("Upload did not return a file URI");
+    return j.uri;
   } catch (e) {
-    throw new Error("Gemini Files upload စမရပါ — internet စစ်ပါ");
-  }
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error("Files upload init error " + res.status + ": " + t.slice(0, 180));
-  }
-  const uploadUrl = res.headers.get("x-goog-upload-url");
-  if (!uploadUrl) throw new Error("Upload URL မရပါ");
-  // Step 2: upload bytes
-  const ures = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: {
-      "Content-Length": String(file.size),
-      "X-Goog-Upload-Offset": "0",
-      "X-Goog-Upload-Command": "upload, finalize",
-    },
-    body: file,
-  });
-  if (!ures.ok) {
-    const t = await ures.text().catch(() => "");
-    throw new Error("Files upload error " + ures.status + ": " + t.slice(0, 180));
-  }
-  const uj = await ures.json();
-  const fileUri = uj.file && uj.file.uri;
-  const fileName = uj.file && uj.file.name;
-  if (!fileUri) throw new Error("File URI မရပါ");
-  // Step 3: wait for ACTIVE
-  for (let i = 0; i < 60; i++) {
-    await new Promise((r) => setTimeout(r, 5000));
-    if (onprog) { try { onprog(i + 1); } catch (_) {} }
-    const sres = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/" + fileName,
-      { headers: { "x-goog-api-key": gemini } }
-    );
-    if (!sres.ok) continue;
-    const sj = await sres.json();
-    const state = sj.state || (sj.file && sj.file.state);
-    if (state === "ACTIVE") return fileUri;
-    if (state === "FAILED") throw new Error("Video process မအောင်မြင်ပါ");
-  }
-  throw new Error("Video process ကြာလွန်းနေပါတယ် — ပြန်ကြိုးစားပါ");
+    if (e.name === "AbortError") throw new Error("Video upload timed out");
+    throw e;
+  } finally { clearTimeout(timer); }
 }
+
+
 
 /** Style prompts for recap narration. */
 export const RECAP_STYLES = {
@@ -372,15 +340,21 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", o
         generationConfig: { temperature: 0.8, maxOutputTokens: 16384 },
         systemInstruction: { parts: [{ text: systemText }] },
       };
-      const res = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
-        { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
-      );
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error("Gemini (" + m + ") error " + res.status + ": " + t.slice(0, 180));
+      let j;
+      try {
+        j = await geminiViaServer(m, gemini, body);
+      } catch (proxyErr) {
+        if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
+        const res = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
+          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
+        );
+        if (!res.ok) {
+          const t = await res.text().catch(() => "");
+          throw new Error("Gemini (" + m + ") error " + res.status + ": " + t.slice(0, 180));
+        }
+        j = await res.json();
       }
-      const j = await res.json();
       const text = ((j.candidates || [])[0] || {}).content?.parts
         ?.map((p) => p.text || "").join("") || "";
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
@@ -406,19 +380,24 @@ export async function geminiTranscribe(mp3Blob) {
     ]}],
     generationConfig: { temperature: 0.2, maxOutputTokens: 16384 },
   };
-  let res = null, terr = null;
+  let j = null, terr = null;
   for (const m of ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]) {
     try {
-      res = await fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
-        { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
-      );
-      if (!res.ok) throw new Error("Gemini transcribe error " + res.status);
+      try {
+        j = await geminiViaServer(m, gemini, body);
+      } catch (proxyErr) {
+        if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
+        const res = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
+          { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
+        );
+        if (!res.ok) throw new Error("Gemini transcribe error " + res.status);
+        j = await res.json();
+      }
       break;
-    } catch (e) { terr = e; res = null; }
+    } catch (e) { terr = e; j = null; }
   }
-  if (!res) throw terr || new Error("Gemini transcribe မအောင်မြင်ပါ");
-  const j = await res.json();
+  if (!j) throw terr || new Error("Gemini transcribe မအောင်မြင်ပါ");
   const text = ((j.candidates || [])[0] || {}).content?.parts
     ?.map((p) => p.text || "").join("") || "";
   const lines = text.split("\n");
