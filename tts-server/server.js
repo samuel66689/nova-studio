@@ -271,13 +271,14 @@ const server = http.createServer(async (req, res) => {
     if (geminiUploadActive) {
       res.writeHead(429, { "Content-Type": "text/plain" });
       res.end("upload busy — try again in a moment");
-      req.destroy();
+      req.resume(); // drain incoming body, don't destroy (response must flush)
       return;
     }
     geminiUploadActive = true;
-    const releaseSemaphore = () => { geminiUploadActive = false; };
-    // Ensure release on disconnect
-    req.on("close", releaseSemaphore);
+    let semaphoreReleased = false;
+    const releaseSemaphore = () => {
+      if (!semaphoreReleased) { semaphoreReleased = true; geminiUploadActive = false; }
+    };
 
     const chunks = [];
     let totalLen = 0;
@@ -293,7 +294,7 @@ const server = http.createServer(async (req, res) => {
           res.end("video too large (max 100MB)");
         }
         releaseSemaphore();
-        req.destroy();
+        req.resume(); // drain remaining body, don't destroy (response must flush)
         return;
       }
       chunks.push(c);
