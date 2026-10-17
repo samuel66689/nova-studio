@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018e";
+} from "./js/api.js?v=20261018f";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1542,6 +1542,16 @@ async function refreshPresetList() {
 let rcUiMode = "all";
 let rcWizStage = 0;
 const RC_WIZ_STAGES = ["Project & Preset", "Style & Overlays", "Voice & Recap", "Sync & Export"];
+// Stage element mapping: stage index -> array of element IDs or selectors
+// Elements are shown/hidden, never moved or duplicated
+const RC_STAGE_MAP = {
+  0: ["rcFile", "rcFileInfo", "rcSrtFile", "rcSrtInfo"], // + preset section (by class)
+  1: ["rcBlurSection", "rcRatio", "rcRes", "rcFit", "rcFlip"], // + subtitle/logo sects
+  2: ["rcLang", "rcVoice", "previewVoice", "rcStyle", "rcWatchMode", "rcSeriesOn",
+      "rcSeriesBox", "rcAudioFirst", "rcTranscript", "rcScript", "startRecap"],
+  3: ["rcSyncOnly", "rcProgress", "rcProgressLabel", "rcResults", "rcLog",
+      "rcMemBox", "rcMemText", "rcMemView", "rcMemSave", "rcMemDel"],
+};
 function initModeSwitch() {
   try {
     const btns = document.querySelectorAll(".rc-mode-btn");
@@ -1553,11 +1563,25 @@ function initModeSwitch() {
         b.classList.add("active");
         rcUiMode = b.dataset.mode;
         if (wizNav) wizNav.style.display = rcUiMode === "wizard" ? "" : "none";
-        // Phase 2: just toggle nav visibility. Stage content mapping in Phase 3.
-        // All Settings = current behavior (everything visible)
+        if (rcUiMode === "wizard") {
+          setWizStage(0); // start at first stage
+        } else {
+          applyStageVisibility(); // restore all
+        }
         console.log("[mode]", rcUiMode);
       });
     });
+    // Back/Next navigation
+    const backBtn = document.getElementById("rcWizBack");
+    const nextBtn = document.getElementById("rcWizNext");
+    if (backBtn && !backBtn.dataset.bound) {
+      backBtn.dataset.bound = "1";
+      backBtn.addEventListener("click", () => setWizStage(rcWizStage - 1));
+    }
+    if (nextBtn && !nextBtn.dataset.bound) {
+      nextBtn.dataset.bound = "1";
+      nextBtn.addEventListener("click", () => setWizStage(rcWizStage + 1));
+    }
     // Wizard dots (visual only in Phase 2)
     const steps = document.getElementById("rcWizSteps");
     if (steps && !steps.dataset.bound) {
@@ -1571,6 +1595,73 @@ function initModeSwitch() {
     }
   } catch (e) { console.warn("mode switch failed", e); }
 }
+/** Set wizard stage (0-3). Shows only relevant controls. */
+function setWizStage(n) {
+  n = Math.max(0, Math.min(3, n));
+  rcWizStage = n;
+  // Update dots
+  const dots = document.querySelectorAll("#rcWizSteps .rc-wiz-dot");
+  dots.forEach((d, i) => {
+    d.classList.toggle("active", i === n);
+    d.classList.toggle("done", i < n);
+  });
+  // Update Back/Next labels
+  const back = document.getElementById("rcWizBack");
+  const next = document.getElementById("rcWizNext");
+  if (back) back.disabled = (n === 0);
+  if (next) next.textContent = (n === 3) ? "✓ Done" : "Next ▶";
+  // Show/hide stage elements
+  applyStageVisibility();
+}
+
+/** Show only current stage elements in Wizard mode; all in All Settings mode */
+function applyStageVisibility() {
+  const tabRecap = document.getElementById("tab-recap");
+  if (!tabRecap) return;
+  if (rcUiMode !== "wizard") {
+    // All Settings: show everything (clear any stage hiding)
+    tabRecap.querySelectorAll("[data-wiz-hidden]").forEach(el => {
+      el.style.display = "";
+      el.removeAttribute("data-wiz-hidden");
+    });
+    return;
+  }
+  // Wizard: hide all stageable, show current stage
+  const allIds = new Set();
+  Object.values(RC_STAGE_MAP).forEach(arr => arr.forEach(id => allIds.add(id)));
+  // Also include preset section, subtitle/logo sects
+  const presetSection = document.querySelector("#tab-recap [id^='rcPreset']")?.closest("div[style*='border']");
+  const subSect = Array.from(tabRecap.querySelectorAll(".sect")).find(s =>
+    s.querySelector(".sect-title")?.textContent.includes("Subtitle"));
+  const logoSect = Array.from(tabRecap.querySelectorAll(".sect")).find(s =>
+    s.querySelector(".sect-title")?.textContent.includes("Logo"));
+  const stageGroups = {
+    0: [...RC_STAGE_MAP[0], ...(presetSection ? [presetSection] : [])],
+    1: [...RC_STAGE_MAP[1], ...(subSect ? [subSect] : []), ...(logoSect ? [logoSect] : [])],
+    2: RC_STAGE_MAP[2],
+    3: RC_STAGE_MAP[3],
+  };
+  // Hide all, then show current
+  const allEls = new Set();
+  Object.values(stageGroups).forEach(group => {
+    group.forEach(item => {
+      const el = typeof item === "string" ? document.getElementById(item) : item;
+      if (el) allEls.add(el);
+    });
+  });
+  allEls.forEach(el => {
+    el.style.display = "none";
+    el.setAttribute("data-wiz-hidden", "1");
+  });
+  (stageGroups[rcWizStage] || []).forEach(item => {
+    const el = typeof item === "string" ? document.getElementById(item) : item;
+    if (el) {
+      el.style.display = "";
+      el.removeAttribute("data-wiz-hidden");
+    }
+  });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initModeSwitch);
 } else {
