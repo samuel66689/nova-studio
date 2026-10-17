@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017k";
+} from "./js/api.js?v=20261018e";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
