@@ -373,6 +373,45 @@ button.ghost:active { border-color: var(--acc); }
 /* recap blur preview */
 #rcBlurPrev { border-radius: 14px; border: 1px solid var(--line); background: #000; }
 #rcLogoPrev { border-radius: 12px; border: 1px solid var(--line); }
+/* Stage 1: Mobile-first layout */
+.rc-preview-sticky {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--bg); padding: 8px 0;
+  max-height: 45vh; overflow: hidden;
+}
+.rc-preview-sticky #rcBlurWrap { max-width: 280px !important; }
+details.rc-sect { margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; }
+details.rc-sect > summary {
+  padding: 10px 12px; cursor: pointer; font-weight: 600;
+  list-style: none; display: flex; align-items: center; gap: 8px;
+}
+details.rc-sect > summary::-webkit-details-marker { display: none; }
+details.rc-sect > summary::before { content: "▶"; font-size: 10px; color: var(--dim); }
+details.rc-sect[open] > summary::before { content: "▼"; }
+details.rc-sect > .sect-body { padding: 0 12px 12px; }
+/* Stage 2: Preview tool tabs */
+.rc-tools { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+.rc-tool {
+  font-size: 12px; padding: 6px 12px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer; color: var(--dim);
+}
+.rc-tool.active {
+  border-color: var(--acc); color: var(--txt);
+  background: rgba(139,92,246,.15); font-weight: 600;
+}
+#rcBlurWrap.tool-sub #rcLogoDrag,
+#rcBlurWrap.tool-sub .rcbox { pointer-events: none; opacity: .4; }
+#rcBlurWrap.tool-logo #rcSubPreview,
+#rcBlurWrap.tool-logo .rcbox { pointer-events: none; opacity: .4; }
+#rcBlurWrap.tool-blur #rcSubPreview,
+#rcBlurWrap.tool-blur #rcLogoDrag { pointer-events: none; opacity: .4; }
+/* Logo resize handle */
+#rcLogoResize {
+  position: absolute; right: -8px; bottom: -8px;
+  width: 20px; height: 20px; background: #4da6ff;
+  border-radius: 50%; cursor: nwse-resize; touch-action: none;
+}
 
 /* error box injected by inline script */
 #js-errbox { border-top: 2px solid var(--err); }
@@ -501,18 +540,21 @@ button.ghost:active { border-color: var(--acc); }
       <div class="fileinfo" id="rcSrtInfo"></div>
     </div>
 
-    <div id="rcBlurSection" style="display:none;">
-      <div class="sect">
-        <span class="sect-title">🟫 Blur box <span style="color:var(--dim);font-weight:400;font-size:12px;">(preview ပေါ်မှာ ဆွဲရွှေ့/ချဲ့နိုင်တယ်)</span></span>
-        <div id="rcBlurWrap" style="position:relative;width:100%;max-width:340px;aspect-ratio:9/16;background:#000;border-radius:12px;overflow:hidden;margin:0 auto;">
-          <video id="rcBlurPrev" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
-        </div>
-        <div class="btn-row" style="margin-top:8px;">
-          <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
-          <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
-        </div>
-        <div id="rcBlurList"></div>
+    <div id="rcBlurSection" style="display:none;" class="rc-preview-sticky">
+      <div class="rc-tools" id="rcTools">
+        <button class="rc-tool active" data-tool="all">👆 All</button>
+        <button class="rc-tool" data-tool="sub">📝 Sub</button>
+        <button class="rc-tool" data-tool="logo">🖼️ Logo</button>
+        <button class="rc-tool" data-tool="blur">🟫 Blur</button>
       </div>
+      <div id="rcBlurWrap" style="position:relative;width:100%;max-width:340px;aspect-ratio:9/16;background:#000;border-radius:12px;overflow:hidden;margin:0 auto;">
+        <video id="rcBlurPrev" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
+        <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+      </div>
+      <div id="rcBlurList"></div>
     </div>
 
     <div class="row" style="align-items:flex-end;">
@@ -794,6 +836,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261017y"></script>
+<script type="module" src="app-v3.js?v=20261017z"></script>
 </body>
 </html>
