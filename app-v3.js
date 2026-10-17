@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018d";
+} from "./js/api.js?v=20261018e";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1536,6 +1536,45 @@ async function refreshPresetList() {
     }
     if (cur) sel.value = cur;
   } catch (e) { console.warn("refreshPresetList failed", e); }
+}
+
+/** Phase 2: Mode switch (Wizard | All Settings) - layout foundation */
+let rcUiMode = "all";
+let rcWizStage = 0;
+const RC_WIZ_STAGES = ["Project & Preset", "Style & Overlays", "Voice & Recap", "Sync & Export"];
+function initModeSwitch() {
+  try {
+    const btns = document.querySelectorAll(".rc-mode-btn");
+    const wizNav = document.getElementById("rcWizardNav");
+    if (!btns.length) return;
+    btns.forEach(b => {
+      b.addEventListener("click", () => {
+        btns.forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        rcUiMode = b.dataset.mode;
+        if (wizNav) wizNav.style.display = rcUiMode === "wizard" ? "" : "none";
+        // Phase 2: just toggle nav visibility. Stage content mapping in Phase 3.
+        // All Settings = current behavior (everything visible)
+        console.log("[mode]", rcUiMode);
+      });
+    });
+    // Wizard dots (visual only in Phase 2)
+    const steps = document.getElementById("rcWizSteps");
+    if (steps && !steps.dataset.bound) {
+      steps.dataset.bound = "1";
+      RC_WIZ_STAGES.forEach((name, i) => {
+        const d = document.createElement("div");
+        d.className = "rc-wiz-dot" + (i === 0 ? " active" : "");
+        d.title = name;
+        steps.appendChild(d);
+      });
+    }
+  } catch (e) { console.warn("mode switch failed", e); }
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initModeSwitch);
+} else {
+  initModeSwitch();
 }
 
 /** Preview tool tabs: control which overlay is interactive */
