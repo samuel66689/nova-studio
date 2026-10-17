@@ -172,6 +172,38 @@ export async function groqTranscribe(mp3Blob, language) {
 }
 
 // ---------- Gemini ----------
+const GEMINI_PROXY = "https://nova-tts.onrender.com/api/gemini";
+
+/**
+ * Route Gemini generateContent through the server proxy (US IP).
+ * Falls back to direct browser request only on network-level failures,
+ * NOT on API errors (invalid key, quota, location) to avoid duplicate calls.
+ */
+async function geminiViaServer(model, key, geminiBody) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 95000);
+  try {
+    const res = await fetch(GEMINI_PROXY, {
+      method: "POST",
+      signal: ctrl.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, key, geminiBody }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      const err = new Error("Gemini proxy (" + model + ") error " + res.status + ": " + t.slice(0, 180));
+      err.isApiError = res.status >= 400 && res.status < 500;
+      throw err;
+    }
+    return await res.json();
+  } finally { clearTimeout(timer); }
+}
+
+function isNetworkFailure(e) {
+  return e.name === "AbortError" || e.name === "TypeError" ||
+    /failed to fetch|network|timeout/i.test(e.message || "");
+}
+
 async function geminiGenerateParts(model, systemText, parts, maxTokens) {
   const { gemini } = getKeys();
   if (!gemini) throw new Error("Gemini API key မထည့်ရသေးပါ — ⚙️ Settings မှာ ထည့်ပါ");
@@ -180,20 +212,28 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
     generationConfig: { temperature: 0.8, maxOutputTokens: maxTokens || 8192 },
   };
   if (systemText) body.systemInstruction = { parts: [{ text: systemText }] };
-  let res;
+  // Try server proxy first (US IP, bypasses geo-blocking)
+  let j;
   try {
-    res = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
-      { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
-    );
-  } catch (e) {
-    throw new Error("Gemini ကို ဆက်သွယ်မရပါ — internet စစ်ပါ");
+    j = await geminiViaServer(model, gemini, body);
+  } catch (proxyErr) {
+    // Fallback to direct only on network failures, not API errors
+    if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
+    let res;
+    try {
+      res = await fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent",
+        { method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": gemini }, body: JSON.stringify(body) }
+      );
+    } catch (e) {
+      throw new Error("Gemini ကို ဆက်သွယ်မရပါ — internet စစ်ပါ");
+    }
+    if (!res.ok) {
+      const t = await res.text().catch(() => "");
+      throw new Error("Gemini (" + model + ") error " + res.status + ": " + t.slice(0, 180));
+    }
+    j = await res.json();
   }
-  if (!res.ok) {
-    const t = await res.text().catch(() => "");
-    throw new Error("Gemini (" + model + ") error " + res.status + ": " + t.slice(0, 180));
-  }
-  const j = await res.json();
   const text = ((j.candidates || [])[0] || {}).content?.parts
     ?.map((p) => p.text || "").join("") || "";
   if (!text.trim()) throw new Error("Gemini က စာမပြန်ပါ — ပြန်ကြိုးစားပါ");
