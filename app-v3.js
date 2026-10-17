@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017w";
+} from "./js/api.js?v=20261017x";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1333,6 +1333,7 @@ function collectPresetSettings() {
     voice: ($("rcVoice") || {}).value || "my-MM-ThihaNeural",
     style_: ($("rcStyle") || {}).value || "",
     lang: ($("rcLang") || {}).value || "",
+    flip: ($("rcFlip") || {}).checked || false,
   };
 }
 
@@ -1355,6 +1356,7 @@ async function applyPresetSettings(settings) {
   set("rcVoice", settings.voice);
   set("rcStyle", settings.style_);
   set("rcLang", settings.lang);
+  setChk("rcFlip", settings.flip);
   // Logo position
   if (settings.logoPos) {
     rcLogoPos = { ...settings.logoPos };
