@@ -58,11 +58,11 @@ import {
   getKeys, saveKeys, clearKeys,
   groqTranscribe, aaiTranscribe, geminiTranscribe, geminiRecapScript, geminiRecapScriptVision,
   geminiUploadVideo, geminiRecapFromVideoFile,
-  idbSet, idbGet, idbDel,
+  idbSet, idbGet, idbDel, idbKeys,
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017v";
+} from "./js/api.js?v=20261017w";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1031,6 +1031,8 @@ let rcLogoPos = { x: 0.05, y: 0.05, size: 0.15 }; // fractions
 $("rcLogoFile")?.addEventListener("change", (e) => {
   const f = e.target.files[0];
   if (!f) return;
+  rcLogoBlob = f; // preserve original blob for preset saving
+  rcLogoImageId = null; // new upload, not yet saved
   const url = URL.createObjectURL(f);
   const img = new Image();
   img.onload = () => {
@@ -1302,6 +1304,307 @@ function refreshSeriesDropdown() {
     if (t === cur) o.selected = true;
     sel.appendChild(o);
   }
+}
+
+/* ============================================================
+   PHASE 1: Series Presets (local browser storage)
+   ============================================================ */
+const PRESET_PREFIX = "preset_";
+const LOGO_PREFIX = "logo_";
+
+/** Collect current UI settings into a preset object */
+function collectPresetSettings() {
+  const style = getStyleOpts();
+  const dims = getRcDims();
+  return {
+    subOn: style.subOn,
+    subColor: style.subColor,
+    subSize: style.subSize,
+    subFont: style.subFont,
+    shadeColor: style.shadeColor,
+    shadeThick: style.shadeThick,
+    subPos: style.subPos,
+    logoShape: style.logoShape,
+    logoPos: style.logoPos ? { ...style.logoPos } : null,
+    logoImageId: style.logoPos ? rcLogoImageId : null,
+    ratio: ($("rcRatio") || {}).value || "9:16",
+    res: ($("rcRes") || {}).value || "720",
+    fit: ($("rcFit") || {}).value || "cover",
+    voice: ($("rcVoice") || {}).value || "my-MM-ThihaNeural",
+    style_: ($("rcStyle") || {}).value || "",
+    lang: ($("rcLang") || {}).value || "",
+  };
+}
+
+/** Apply preset settings to UI. Does NOT modify the saved preset. */
+async function applyPresetSettings(settings) {
+  if (!settings) return;
+  const set = (id, v) => { const el = $(id); if (el && v !== undefined && v !== null) el.value = v; };
+  const setChk = (id, v) => { const el = $(id); if (el && v !== undefined) el.checked = !!v; };
+  setChk("rcSubOn", settings.subOn);
+  set("rcSubColor", settings.subColor);
+  set("rcSubSize", String(settings.subSize || "28"));
+  set("rcSubFont", settings.subFont);
+  set("rcShadeColor", settings.shadeColor);
+  set("rcShadeThick", String(settings.shadeThick || "4"));
+  set("rcSubPos", settings.subPos);
+  set("rcRatio", settings.ratio);
+  set("rcRes", String(settings.res || "720"));
+  set("rcFit", settings.fit);
+  set("rcLogoShape", settings.logoShape);
+  set("rcVoice", settings.voice);
+  set("rcStyle", settings.style_);
+  set("rcLang", settings.lang);
+  // Logo position
+  if (settings.logoPos) {
+    rcLogoPos = { ...settings.logoPos };
+  }
+  // Logo image: load blob from IDB
+  if (settings.logoImageId) {
+    try {
+      const blob = await idbGet(LOGO_PREFIX + settings.logoImageId);
+      if (!blob) {
+        throw new Error("Logo image မတွေ့ပါ — preset မှာ သိမ်းထားတဲ့ logo ပျောက်နေပါတယ်. Logo ပြန်တင်ပေးပါ");
+      }
+      await setLogoFromBlob(blob);
+      rcLogoImageId = settings.logoImageId;
+    } catch (e) {
+      // Clear logo but don't fail the whole preset
+      rcLogoImg = null; rcLogoImageId = null;
+      const w = $("rcLogoWrap"); if (w) w.style.display = "none";
+      throw e;
+    }
+  } else {
+    rcLogoImg = null; rcLogoImageId = null;
+    const w = $("rcLogoWrap"); if (w) w.style.display = "none";
+  }
+  // Refresh layout
+  try { rcApplyLayout(); } catch (_) {}
+}
+
+/** Set logo from a Blob (preserves original format/transparency) */
+function setLogoFromBlob(blob) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      rcLogoImg = img;
+      rcLogoBlob = blob; // keep original blob for saving
+      const pv = $("rcLogoPrev");
+      if (pv) pv.src = url;
+      const w = $("rcLogoWrap");
+      if (w) w.style.display = "";
+      try { rcInitLogoDrag(); } catch (_) {}
+      res();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("Logo image ဖတ်မရပါ")); };
+    img.src = url;
+  });
+}
+// Track current logo blob for preset saving (original format preserved)
+let rcLogoBlob = null;
+let rcLogoImageId = null;
+
+/** Save logo blob to IDB, returns image ID (dedupe by size+type+name) */
+async function saveLogoBlob(blob) {
+  if (!blob) return null;
+  // Simple ID: timestamp + size (dedupe not critical for Phase 1)
+  const id = "img_" + Date.now().toString(36) + "_" + (blob.size || 0).toString(36);
+  await idbSet(LOGO_PREFIX + id, blob);
+  return id;
+}
+
+/** Create a new preset from current settings */
+async function createPreset(name, seriesTitle) {
+  if (!name || !name.trim()) throw new Error("Preset နာမည် ထည့်ပါ");
+  // Save logo blob first (if any)
+  let logoImageId = null;
+  if (rcLogoImg && rcLogoBlob) {
+    logoImageId = await saveLogoBlob(rcLogoBlob);
+  }
+  const settings = collectPresetSettings();
+  settings.logoImageId = logoImageId;
+  const id = PRESET_PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const preset = {
+    id, name: name.trim(),
+    seriesTitle: (seriesTitle || "").trim() || null,
+    settings,
+    updatedAt: Date.now(),
+  };
+  await idbSet(id, preset);
+  await refreshPresetList();
+  return preset;
+}
+
+/** List all presets */
+async function listPresets() {
+  const keys = await idbKeys();
+  const out = [];
+  for (const k of keys) {
+    if (typeof k === "string" && k.startsWith(PRESET_PREFIX)) {
+      try { const p = await idbGet(k); if (p && p.id) out.push(p); } catch (_) {}
+    }
+  }
+  out.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  return out;
+}
+
+/** Get a preset by ID */
+async function getPreset(id) {
+  if (!id) return null;
+  try { return await idbGet(id); } catch (_) { return null; }
+}
+
+/** Update preset (rename / edit settings / re-link series) */
+async function updatePreset(id, updates) {
+  const p = await getPreset(id);
+  if (!p) throw new Error("Preset မတွေ့ပါ");
+  if (updates.name !== undefined) p.name = updates.name.trim() || p.name;
+  if (updates.seriesTitle !== undefined) p.seriesTitle = updates.seriesTitle.trim() || null;
+  if (updates.settings !== undefined) p.settings = updates.settings;
+  p.updatedAt = Date.now();
+  await idbSet(id, p);
+  await refreshPresetList();
+  return p;
+}
+
+/** Duplicate a preset */
+async function duplicatePreset(id) {
+  const p = await getPreset(id);
+  if (!p) throw new Error("Preset မတွေ့ပါ");
+  const nid = PRESET_PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const copy = JSON.parse(JSON.stringify(p));
+  copy.id = nid;
+  copy.name = p.name + " (copy)";
+  copy.updatedAt = Date.now();
+  await idbSet(nid, copy);
+  await refreshPresetList();
+  return copy;
+}
+
+/** Delete a preset (does not touch projects or Series Memory) */
+async function deletePreset(id) {
+  await idbDel(id);
+  await refreshPresetList();
+}
+
+/** Refresh preset dropdown UI */
+async function refreshPresetList() {
+  const sel = $("rcPresetSel");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— Preset မရွေး —</option>';
+  try {
+    const presets = await listPresets();
+    for (const p of presets) {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = p.name + (p.seriesTitle ? ` (${p.seriesTitle})` : "");
+      sel.appendChild(o);
+    }
+    if (cur) sel.value = cur;
+  } catch (e) { console.warn("refreshPresetList failed", e); }
+}
+
+/** Init preset UI handlers */
+function initPresetUI() {
+  const sel = $("rcPresetSel");
+  if (!sel) return;
+  // Apply button
+  $("rcPresetApply")?.addEventListener("click", async () => {
+    const id = sel.value;
+    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    try {
+      const p = await getPreset(id);
+      if (!p) throw new Error("Preset မတွေ့ပါ");
+      await applyPresetSettings(p.settings);
+      $("rcPresetInfo").textContent = `✅ "${p.name}" သုံးနေပါတယ်`;
+      try { localStorage.setItem("nova_last_preset", id); } catch (_) {}
+    } catch (e) {
+      alert("Preset apply မရပါ: " + (e.message || e));
+    }
+  });
+  // Save button - show editor
+  $("rcPresetSave")?.addEventListener("click", () => {
+    const ed = $("rcPresetEditor");
+    if (ed) ed.style.display = ed.style.display === "none" ? "" : "none";
+  });
+  $("rcPresetManage")?.addEventListener("click", () => {
+    const ed = $("rcPresetEditor");
+    if (ed) ed.style.display = ed.style.display === "none" ? "" : "none";
+  });
+  $("rcPresetClose")?.addEventListener("click", () => {
+    $("rcPresetEditor").style.display = "none";
+  });
+  // Do save
+  $("rcPresetDoSave")?.addEventListener("click", async () => {
+    const name = ($("rcPresetName") || {}).value || "";
+    const series = ($("rcPresetSeries") || {}).value || "";
+    if (!name.trim()) { alert("Preset နာမည် ထည့်ပါ"); return; }
+    try {
+      // Check storage quota
+      const warn = await checkStorageQuota();
+      if (warn) { if (!confirm(warn + "\n\nဆက်လုပ်မလား?")) return; }
+      const p = await createPreset(name, series);
+      $("rcPresetInfo").textContent = `💾 "${p.name}" သိမ်းပြီးပြီ`;
+      $("rcPresetName").value = ""; $("rcPresetSeries").value = "";
+      $("rcPresetEditor").style.display = "none";
+      sel.value = p.id;
+    } catch (e) {
+      alert("Preset သိမ်းမရပါ: " + (e.message || e));
+    }
+  });
+  // Duplicate
+  $("rcPresetDup")?.addEventListener("click", async () => {
+    const id = sel.value;
+    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    try {
+      const p = await duplicatePreset(id);
+      sel.value = p.id;
+      $("rcPresetInfo").textContent = `📋 "${p.name}" ပွားပြီးပြီ`;
+    } catch (e) { alert("ပွားမရပါ: " + (e.message || e)); }
+  });
+  // Delete
+  $("rcPresetDel")?.addEventListener("click", async () => {
+    const id = sel.value;
+    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    const p = await getPreset(id);
+    if (!confirm(`"${p ? p.name : id}" ကို ဖျက်မလား?`)) return;
+    try {
+      await deletePreset(id);
+      sel.value = "";
+      $("rcPresetInfo").textContent = "";
+    } catch (e) { alert("ဖျက်မရပါ: " + (e.message || e)); }
+  });
+  // Track manual changes - show "modified" if settings differ from applied preset
+  // (Phase 1: simple indicator, no auto-compare)
+  // Init: refresh list and restore last preset selection
+  refreshPresetList().then(() => {
+    try {
+      const last = localStorage.getItem("nova_last_preset");
+      if (last) sel.value = last;
+    } catch (_) {}
+  });
+}
+// Init on DOM ready
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initPresetUI);
+} else {
+  initPresetUI();
+}
+
+/** Check storage quota and warn if >80% used */
+async function checkStorageQuota() {
+  try {
+    if (!navigator.storage || !navigator.storage.estimate) return null;
+    const est = await navigator.storage.estimate();
+    if (!est.quota) return null;
+    const pct = (est.usage || 0) / est.quota;
+    if (pct > 0.8) {
+      return `⚠️ Browser storage ${(pct * 100).toFixed(0)}% ပြည့်နေပါပြီ — မလိုတဲ့ projects/presets ဖျက်ပါ`;
+    }
+    return null;
+  } catch (_) { return null; }
 }
 
 /** Get series info from UI */
