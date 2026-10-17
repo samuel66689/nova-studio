@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018c";
+} from "./js/api.js?v=20261018d";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1594,6 +1594,11 @@ function initPreviewTools() {
       if (label) label.textContent = labels[tool] || labels.all;
       // Move relevant settings to dock
       restoreAll();
+      const blurControls = document.getElementById("rcBlurControls");
+      if (blurControls) {
+        // Show blur controls only in All and Blu modes
+        blurControls.style.display = (tool === "all" || tool === "blur") ? "" : "none";
+      }
       if (tool === "sub") {
         const s = findSect("Subtitle");
         if (s) moveToDock(s);
@@ -1601,7 +1606,6 @@ function initPreviewTools() {
         const s = findSect("Logo");
         if (s) moveToDock(s);
       }
-      // blur controls are already in preview section
     });
   } catch (e) { console.warn("tool tabs failed", e); }
 }
