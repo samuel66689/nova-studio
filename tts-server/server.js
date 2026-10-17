@@ -228,9 +228,15 @@ const server = http.createServer(async (req, res) => {
       }
     });
     req.on("end", async () => {
+      // DIAG vars defined before try so catch block can always access them,
+      // even if JSON.parse fails (prevents secondary ReferenceError).
+      const diagId = Math.random().toString(36).slice(2, 10);
+      const diagStart = Date.now();
+      let diagModel = "?";
       try {
         const data = JSON.parse(body || "{}");
         const { model, key, geminiBody } = data;
+        diagModel = model || "?";
         // Validate model (prevent arbitrary model/endpoint abuse)
         if (!model || !ALLOWED_GEMINI_MODELS.has(model)) {
           res.writeHead(400); res.end("invalid model"); return;
@@ -243,10 +249,7 @@ const server = http.createServer(async (req, res) => {
         }
         // Forward to official Gemini API only.
         // Key sent via x-goog-api-key header (never in URL, never logged).
-        // DIAG: correlation ID for tracing (temporary)
-        const diagId = Math.random().toString(36).slice(2, 10);
         const diagOrigin = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "direct";
-        const diagStart = Date.now();
         // DIAG-START: log immediately on request receipt (before Google call)
         // Sanitized: only correlation ID and model name. No keys, prompts, or bodies.
         console.log(`[gemini-diag-start] id=${diagId} model=${model}`);
@@ -282,7 +285,7 @@ const server = http.createServer(async (req, res) => {
         const isAbort = e.name === "AbortError";
         const diagDur2 = Date.now() - diagStart;
         // DIAG-ERROR: log timeouts and failures explicitly (no secrets)
-        console.log(`[gemini-diag-error] id=${diagId} model=${model} dur=${diagDur2}ms err=${isAbort ? "timeout" : "error"}`);
+        console.log(`[gemini-diag-error] id=${diagId} model=${diagModel} dur=${diagDur2}ms err=${isAbort ? "timeout" : "error"}`);
         if (!res.writableEnded) {
           res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
           res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
