@@ -266,10 +266,21 @@ const server = http.createServer(async (req, res) => {
     }
     const chunks = [];
     let totalLen = 0;
+    let tooLarge = false;
     req.on("data", (c) => {
       totalLen += c.length;
-      if (totalLen > 500 * 1024 * 1024) { req.destroy(); return; }
+      if (totalLen > 100 * 1024 * 1024) {
+        tooLarge = true;
+        req.destroy();
+        return;
+      }
       chunks.push(c);
+    });
+    req.on("close", () => {
+      if (tooLarge && !res.writableEnded) {
+        res.writeHead(413, { "Content-Type": "text/plain" });
+        res.end("video too large (max 100MB)");
+      }
     });
     req.on("end", async () => {
       try {
