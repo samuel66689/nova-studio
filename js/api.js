@@ -243,7 +243,7 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
 /** Gemini Files API: upload video file, returns file URI. */
 export async function geminiUploadVideo(file, onprog) {
   const { gemini } = getKeys();
-  if (!gemini) throw new Error("Gemini API key not set");
+  if (!gemini) throw new Error("Gemini API key \u1019\u101b\u1004\u1037\u1032\u101e\u1031\u1038\u1015\u102b — ⚙️ Settings \u1019\u103e\u102c \u1011\u100a\u1037\u1015\u102b");
   // Route through server proxy (US IP) to bypass geo-blocking.
   // Server handles resumable upload init, byte transfer, and ACTIVE polling.
   const ctrl = new AbortController();
@@ -262,13 +262,14 @@ export async function geminiUploadVideo(file, onprog) {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      throw new Error("Video upload failed (" + res.status + "): " + t.slice(0, 120));
+      if (res.status === 413) throw new Error("Video \u1000\u103c\u102e\u1038\u1038\u1000\u103c\u102e\u1038\u1000\u103c\u102e\u1038 (100MB \u1021\u1011\u1000\u103a)");
+      throw new Error("Video upload \u1019\u1031\u1021\u102f\u1004\u103a\u1019\u103c\u1004\u103a (" + res.status + "): " + t.slice(0, 120));
     }
     const j = await res.json();
-    if (!j.uri) throw new Error("Upload did not return a file URI");
+    if (!j.uri) throw new Error("File URI \u1019\u101b\u1015\u102b");
     return j.uri;
   } catch (e) {
-    if (e.name === "AbortError") throw new Error("Video upload timed out");
+    if (e.name === "AbortError") throw new Error("Video upload \u1021\u1001\u102d\u1014\u103a\u1000\u102f\u1014\u103a\u101c\u103d\u1014\u103a");
     throw e;
   } finally { clearTimeout(timer); }
 }
