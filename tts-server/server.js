@@ -17,6 +17,9 @@ const ALLOWED_GEMINI_MODELS = new Set([
   "gemini-1.5-flash", "gemini-1.5-pro",
 ]);
 
+// --- concurrency semaphore for /api/gemini-upload (max 1 active) ---
+let geminiUploadActive = false;
+
 // --- simple per-IP rate limit: 60 TTS requests / minute ---
 const hits = new Map();
 function rateLimited(ip) {
@@ -264,27 +267,42 @@ const server = http.createServer(async (req, res) => {
     if (!/^video\//.test(mimeType) && mimeType !== "video/mp4") {
       res.writeHead(400); res.end("invalid mime type"); return;
     }
+    // Semaphore: reject if another upload is active (don't buffer the body)
+    if (geminiUploadActive) {
+      res.writeHead(429, { "Content-Type": "text/plain" });
+      res.end("upload busy — try again in a moment");
+      req.destroy();
+      return;
+    }
+    geminiUploadActive = true;
+    const releaseSemaphore = () => { geminiUploadActive = false; };
+    // Ensure release on disconnect
+    req.on("close", releaseSemaphore);
+
     const chunks = [];
     let totalLen = 0;
-    let tooLarge = false;
+    let rejected = false;
     req.on("data", (c) => {
+      if (rejected) return;
       totalLen += c.length;
       if (totalLen > 100 * 1024 * 1024) {
-        tooLarge = true;
+        rejected = true;
+        chunks.length = 0; // free buffered data immediately
+        if (!res.writableEnded) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("video too large (max 100MB)");
+        }
+        releaseSemaphore();
         req.destroy();
         return;
       }
       chunks.push(c);
     });
-    req.on("close", () => {
-      if (tooLarge && !res.writableEnded) {
-        res.writeHead(413, { "Content-Type": "text/plain" });
-        res.end("video too large (max 100MB)");
-      }
-    });
     req.on("end", async () => {
+      if (rejected) return; // already handled 413
       try {
         const videoBuf = Buffer.concat(chunks);
+        chunks.length = 0; // free originals
         if (!videoBuf.length) { res.writeHead(400); res.end("empty video"); return; }
         const H = { "x-goog-api-key": key };
         // Step 1: init resumable upload
@@ -348,8 +366,12 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(504); res.end("processing timeout");
       } catch (e) {
         const isAbort = e.name === "AbortError";
-        res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
-        res.end(isAbort ? "upload timeout" : "upload proxy error");
+        if (!res.writableEnded) {
+          res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
+          res.end(isAbort ? "upload timeout" : "upload proxy error");
+        }
+      } finally {
+        releaseSemaphore();
       }
     });
     return;
