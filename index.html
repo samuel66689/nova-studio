@@ -568,11 +568,13 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
       <div id="rcBlurWrap" style="position:relative;width:100%;max-width:340px;aspect-ratio:9/16;background:#000;border-radius:12px;overflow:hidden;margin:0 auto;">
         <video id="rcBlurPrev" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
       </div>
-      <div class="btn-row" style="margin-top:8px;">
-        <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
-        <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+      <div id="rcBlurControls">
+        <div class="btn-row" style="margin-top:8px;">
+          <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
+          <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+        </div>
+        <div id="rcBlurList"></div>
       </div>
-      <div id="rcBlurList"></div>
       <div id="rcSettingsDock" style="margin-top:12px;"></div>
     </div>
 
@@ -855,6 +857,6 @@ function __showErr(m) {
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261018c"></script>
+<script type="module" src="app-v3.js?v=20261018d"></script>
 </body>
 </html>
