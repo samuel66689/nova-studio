@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018b";
+} from "./js/api.js?v=20261018c";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1548,12 +1548,41 @@ function initPreviewTools() {
     if (tools.dataset.bound) return;
     tools.dataset.bound = "1";
     const label = document.getElementById("rcModeLabel");
+    const dock = document.getElementById("rcSettingsDock");
     const labels = {
       all: "👆 All overlays active",
       sub: "📝 Subtitle mode — logo/blur won't intercept touches",
       logo: "🖼️ Logo mode — drag/resize logo",
       blur: "🟫 Blur mode — add/move/resize blur boxes",
     };
+    // Track original positions for restore
+    const origPos = new Map();
+    function findSect(keyword) {
+      const sects = document.querySelectorAll("#tab-recap .sect");
+      for (const s of sects) {
+        const t = s.querySelector(".sect-title");
+        if (t && t.textContent.includes(keyword)) return s;
+      }
+      return null;
+    }
+    function moveToDock(sect) {
+      if (!sect || !dock) return;
+      if (!origPos.has(sect)) {
+        origPos.set(sect, { parent: sect.parentNode, next: sect.nextSibling });
+      }
+      dock.appendChild(sect);
+    }
+    function restoreAll() {
+      for (const [sect, pos] of origPos) {
+        if (pos.next && pos.next.parentNode === pos.parent) {
+          pos.parent.insertBefore(sect, pos.next);
+        } else {
+          pos.parent.appendChild(sect);
+        }
+      }
+      origPos.clear();
+      if (dock) dock.innerHTML = "";
+    }
     tools.addEventListener("click", (e) => {
       const btn = e.target.closest(".rc-tool");
       if (!btn) return;
@@ -1563,6 +1592,16 @@ function initPreviewTools() {
       wrap.classList.remove("tool-sub", "tool-logo", "tool-blur");
       if (tool !== "all") wrap.classList.add("tool-" + tool);
       if (label) label.textContent = labels[tool] || labels.all;
+      // Move relevant settings to dock
+      restoreAll();
+      if (tool === "sub") {
+        const s = findSect("Subtitle");
+        if (s) moveToDock(s);
+      } else if (tool === "logo") {
+        const s = findSect("Logo");
+        if (s) moveToDock(s);
+      }
+      // blur controls are already in preview section
     });
   } catch (e) { console.warn("tool tabs failed", e); }
 }
