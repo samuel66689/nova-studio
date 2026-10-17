@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017x";
+} from "./js/api.js?v=20261017y";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1457,6 +1457,36 @@ async function getPreset(id) {
   try { return await idbGet(id); } catch (_) { return null; }
 }
 
+/**
+ * Update an existing preset with current UI settings.
+ * Preserves preset ID. Reuses logo blob if unchanged.
+ */
+async function updatePresetWithCurrentSettings(id) {
+  const p = await getPreset(id);
+  if (!p) throw new Error("Preset မတွေ့ပါ");
+  const settings = collectPresetSettings();
+  // Logo: preserve existing blob ID unless user uploaded a new logo
+  // Case 1: new upload (rcLogoBlob set, rcLogoImageId null) → save new blob
+  // Case 2: logo currently displayed with ID → reuse it
+  // Case 3: no logo but preset had one → keep preset's ID (don't lose it)
+  // Case 4: no logo anywhere → null
+  if (rcLogoBlob && !rcLogoImageId) {
+    settings.logoImageId = await saveLogoBlob(rcLogoBlob);
+    rcLogoImageId = settings.logoImageId;
+  } else if (!settings.logoImageId && p.settings && p.settings.logoImageId && rcLogoImg) {
+    // User didn't change logo, preset had one, logo still displayed → keep preset's
+    settings.logoImageId = p.settings.logoImageId;
+  }
+  // Also allow updating name/series from editor fields if filled
+  const newName = ($("rcPresetName") || {}).value || "";
+  const newSeries = ($("rcPresetSeries") || {}).value || "";
+  const updates = { settings };
+  if (newName.trim()) updates.name = newName.trim();
+  // series: allow clearing too (empty = null)
+  if ($("rcPresetSeries")) updates.seriesTitle = newSeries.trim() || null;
+  return await updatePreset(id, updates);
+}
+
 /** Update preset (rename / edit settings / re-link series) */
 async function updatePreset(id, updates) {
   const p = await getPreset(id);
@@ -1538,12 +1568,34 @@ function initPresetUI() {
   $("rcPresetClose")?.addEventListener("click", () => {
     $("rcPresetEditor").style.display = "none";
   });
-  // Do save
+  // Do save (as new) - check for duplicates first
   $("rcPresetDoSave")?.addEventListener("click", async () => {
     const name = ($("rcPresetName") || {}).value || "";
     const series = ($("rcPresetSeries") || {}).value || "";
     if (!name.trim()) { alert("Preset နာမည် ထည့်ပါ"); return; }
     try {
+      // Check for existing preset with same name + series
+      const presets = await listPresets();
+      const dup = presets.find(p =>
+        p.name.trim().toLowerCase() === name.trim().toLowerCase() &&
+        (p.seriesTitle || "").trim().toLowerCase() === series.trim().toLowerCase()
+      );
+      if (dup) {
+        const choice = confirm(
+          `"${dup.name}" နာမည်တူ preset ရှိနေပါတယ်.\n\n` +
+          `OK = ရွေးထားတဲ့ preset ကို Update လုပ်\n` +
+          `Cancel = အသစ် အနေနဲ့ သိမ်း (duplicate)`
+        );
+        if (choice) {
+          // Update existing instead
+          await updatePresetWithCurrentSettings(dup.id);
+          $("rcPresetInfo").textContent = `🔄 "${dup.name}" update ပြီးပြီ`;
+          $("rcPresetEditor").style.display = "none";
+          sel.value = dup.id;
+          return;
+        }
+        // else fall through to create new
+      }
       // Check storage quota
       const warn = await checkStorageQuota();
       if (warn) { if (!confirm(warn + "\n\nဆက်လုပ်မလား?")) return; }
@@ -1554,6 +1606,21 @@ function initPresetUI() {
       sel.value = p.id;
     } catch (e) {
       alert("Preset သိမ်းမရပါ: " + (e.message || e));
+    }
+  });
+  // Update selected preset with current settings
+  $("rcPresetUpdate")?.addEventListener("click", async () => {
+    const id = sel.value;
+    if (!id) { alert("Update လုပ်ဖို့ preset အရင်ရွေးပါ"); return; }
+    const p = await getPreset(id);
+    if (!p) { alert("Preset မတွေ့ပါ"); return; }
+    if (!confirm(`"${p.name}" ရဲ့ settings ကို လက်ရှိ settings နဲ့ အစားထိုးမလား?`)) return;
+    try {
+      await updatePresetWithCurrentSettings(id);
+      $("rcPresetInfo").textContent = `🔄 "${p.name}" update ပြီးပြီ`;
+      $("rcPresetEditor").style.display = "none";
+    } catch (e) {
+      alert("Update မရပါ: " + (e.message || e));
     }
   });
   // Duplicate
