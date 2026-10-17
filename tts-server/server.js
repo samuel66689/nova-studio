@@ -6,6 +6,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
+const BACKEND_VERSION = "20261018-diag1"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 const ALLOWED_VOICES = new Set(["my-MM-NilarNeural", "my-MM-ThihaNeural"]);
 // Gemini proxy: only these models, only generateContent on the official host
@@ -137,6 +138,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && req.url === "/api/version") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ version: BACKEND_VERSION, endpoints: ["/api/gemini", "/api/gemini-upload", "/api/tts", "/api/mix"] }));
+    return;
+  }
+
 
   if (req.method === "POST" && req.url === "/api/mix") {
     const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
@@ -227,6 +234,10 @@ const server = http.createServer(async (req, res) => {
         }
         // Forward to official Gemini API only.
         // Key sent via x-goog-api-key header (never in URL, never logged).
+        // DIAG: correlation ID for tracing (temporary)
+        const diagId = Math.random().toString(36).slice(2, 10);
+        const diagOrigin = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "direct";
+        // Log only: model, origin IP prefix, status. NEVER key, headers, or prompt.
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 90000);
         try {
@@ -238,6 +249,16 @@ const server = http.createServer(async (req, res) => {
             body: JSON.stringify(geminiBody),
           });
           const text = await gres.text();
+          // DIAG: extract Google error code/status/message (sanitized, no prompt content)
+          let gCode = "", gStatus = "", gMsg = "";
+          try {
+            const gj = JSON.parse(text);
+            const ge = gj.error || {};
+            gCode = String(ge.code || "");
+            gStatus = String(ge.status || "");
+            gMsg = String(ge.message || "").slice(0, 120);
+          } catch (_) { /* non-JSON response */ }
+          console.log(`[gemini-diag] id=${diagId} model=${model} origin=${diagOrigin.slice(0,15)} http=${gres.status} gcode=${gCode} gstatus=${gStatus} gmsg=${gMsg}`);
           // Never log key or full body; forward status + body as-is
           res.writeHead(gres.status, { "Content-Type": "application/json" });
           res.end(text);
