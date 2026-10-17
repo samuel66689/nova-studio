@@ -129,7 +129,7 @@ function synth(text, voice) {
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-gemini-key, x-file-name, x-mime-type");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   if (req.method === "GET" && (req.url === "/" || req.url === "/health")) {
