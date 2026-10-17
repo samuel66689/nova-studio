@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018h";
+} from "./js/api.js?v=20261018i";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1605,6 +1605,9 @@ function setWizStage(n) {
     d.classList.toggle("active", i === n);
     d.classList.toggle("done", i < n);
   });
+  // Update stage name
+  const stageName = document.getElementById("rcWizStageName");
+  if (stageName) stageName.textContent = `${n + 1}/4: ${RC_WIZ_STAGES[n]}`;
   // Update Back/Next labels
   const back = document.getElementById("rcWizBack");
   const next = document.getElementById("rcWizNext");
