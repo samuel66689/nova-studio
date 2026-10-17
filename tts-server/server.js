@@ -17,6 +17,9 @@ const ALLOWED_GEMINI_MODELS = new Set([
   "gemini-1.5-flash", "gemini-1.5-pro",
 ]);
 
+// --- concurrency semaphore for /api/gemini-upload (max 1 active) ---
+let geminiUploadActive = false;
+
 // --- simple per-IP rate limit: 60 TTS requests / minute ---
 const hits = new Map();
 function rateLimited(ip) {
@@ -244,6 +247,132 @@ const server = http.createServer(async (req, res) => {
         const isAbort = e.name === "AbortError";
         res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
         res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
+      }
+    });
+    return;
+  }
+
+  // Gemini Files API upload proxy (resumable upload handled server-side)
+  // Client sends raw video bytes; metadata via headers. Never logs key or upload URL.
+  if (req.method === "POST" && req.url === "/api/gemini-upload") {
+    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
+      || req.socket.remoteAddress || "unknown";
+    if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
+    const key = req.headers["x-gemini-key"];
+    const fileName = String(req.headers["x-file-name"] || "video.mp4").slice(0, 100);
+    const mimeType = String(req.headers["x-mime-type"] || "video/mp4").slice(0, 50);
+    if (!key || typeof key !== "string" || key.length < 10) {
+      res.writeHead(400); res.end("missing api key"); return;
+    }
+    if (!/^video\//.test(mimeType) && mimeType !== "video/mp4") {
+      res.writeHead(400); res.end("invalid mime type"); return;
+    }
+    // Semaphore: reject if another upload is active (don't buffer the body)
+    if (geminiUploadActive) {
+      res.writeHead(429, { "Content-Type": "text/plain" });
+      res.end("upload busy — try again in a moment");
+      req.resume(); // drain incoming body, don't destroy (response must flush)
+      return;
+    }
+    geminiUploadActive = true;
+    let semaphoreReleased = false;
+    const releaseSemaphore = () => {
+      if (!semaphoreReleased) { semaphoreReleased = true; geminiUploadActive = false; }
+    };
+
+    const chunks = [];
+    let totalLen = 0;
+    let rejected = false;
+    req.on("data", (c) => {
+      if (rejected) return;
+      totalLen += c.length;
+      if (totalLen > 100 * 1024 * 1024) {
+        rejected = true;
+        chunks.length = 0; // free buffered data immediately
+        if (!res.writableEnded) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("video too large (max 100MB)");
+        }
+        releaseSemaphore();
+        req.resume(); // drain remaining body, don't destroy (response must flush)
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", async () => {
+      if (rejected) return; // already handled 413
+      try {
+        const videoBuf = Buffer.concat(chunks);
+        chunks.length = 0; // free originals
+        if (!videoBuf.length) { res.writeHead(400); res.end("empty video"); return; }
+        const H = { "x-goog-api-key": key };
+        // Step 1: init resumable upload
+        const initCtrl = new AbortController();
+        const initTimer = setTimeout(() => initCtrl.abort(), 30000);
+        let uploadUrl;
+        try {
+          const ires = await fetch(`https://${GEMINI_HOST}/upload/v1beta/files`, {
+            method: "POST", signal: initCtrl.signal,
+            headers: {
+              ...H, "Content-Type": "application/json",
+              "X-Goog-Upload-Protocol": "resumable",
+              "X-Goog-Upload-Command": "start",
+              "X-Goog-Upload-Header-Content-Length": String(videoBuf.length),
+              "X-Goog-Upload-Header-Content-Type": mimeType,
+            },
+            body: JSON.stringify({ file: { displayName: fileName, mimeType } }),
+          });
+          if (!ires.ok) {
+            res.writeHead(ires.status); res.end("upload init failed"); return;
+          }
+          uploadUrl = ires.headers.get("x-goog-upload-url");
+          if (!uploadUrl) { res.writeHead(502); res.end("no upload url"); return; }
+        } finally { clearTimeout(initTimer); }
+        // Step 2: upload bytes (upload URL is Google-internal, never sent to client)
+        const upCtrl = new AbortController();
+        const upTimer = setTimeout(() => upCtrl.abort(), 300000);
+        let fileUri, fName;
+        try {
+          const ures = await fetch(uploadUrl, {
+            method: "PUT", signal: upCtrl.signal,
+            headers: {
+              "Content-Length": String(videoBuf.length),
+              "X-Goog-Upload-Offset": "0",
+              "X-Goog-Upload-Command": "upload, finalize",
+            },
+            body: videoBuf,
+          });
+          if (!ures.ok) { res.writeHead(ures.status); res.end("upload failed"); return; }
+          const uj = await ures.json();
+          fileUri = uj.file && uj.file.uri;
+          fName = uj.file && uj.file.name;
+          if (!fileUri) { res.writeHead(502); res.end("no file uri"); return; }
+        } finally { clearTimeout(upTimer); }
+        // Step 3: poll until ACTIVE (max ~5 min)
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            const sres = await fetch(`https://${GEMINI_HOST}/v1beta/${fName}`, { headers: H });
+            if (!sres.ok) continue;
+            const sj = await sres.json();
+            const state = sj.state || (sj.file && sj.file.state);
+            if (state === "ACTIVE") {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ uri: fileUri, name: fName }));
+              return;
+            }
+            if (state === "FAILED") { res.writeHead(502); res.end("processing failed"); return; }
+          } catch (_) { /* retry */ }
+        }
+        res.writeHead(504); res.end("processing timeout");
+      } catch (e) {
+        const isAbort = e.name === "AbortError";
+        if (!res.writableEnded) {
+          res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
+          res.end(isAbort ? "upload timeout" : "upload proxy error");
+        }
+      } finally {
+        releaseSemaphore();
       }
     });
     return;
