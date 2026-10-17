@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261017y";
+} from "./js/api.js?v=20261017z";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1536,6 +1536,61 @@ async function refreshPresetList() {
     }
     if (cur) sel.value = cur;
   } catch (e) { console.warn("refreshPresetList failed", e); }
+}
+
+/** Stage 1+2: Mobile layout - collapsible sections + preview tool tabs */
+function initMobileLayout() {
+  // Wrap .sect divs in <details> for collapsibility (preserve IDs)
+  try {
+    const tabRecap = document.getElementById("tab-recap");
+    if (!tabRecap) return;
+    // Find direct .sect children of the recap card (not nested)
+    const sects = tabRecap.querySelectorAll(":scope > .card > .sect, :scope > .card > div > .sect");
+    const titles = {
+      "📝 Subtitle style": "📝 Subtitles & Style",
+      "🖼️ Logo": "🖼️ Logo & Watermark",
+    };
+    sects.forEach((sect) => {
+      if (sect.closest("details")) return; // already wrapped
+      const titleEl = sect.querySelector(".sect-title");
+      if (!titleEl) return;
+      const titleText = titleEl.textContent.trim().slice(0, 20);
+      const details = document.createElement("details");
+      details.className = "rc-sect";
+      // Subtitle open by default, others closed
+      if (titleText.includes("Subtitle")) details.open = true;
+      const summary = document.createElement("summary");
+      const newTitle = titles[Object.keys(titles).find(k => titleText.includes(k.slice(2, 8))) || ""] || titleEl.textContent;
+      summary.textContent = newTitle;
+      const body = document.createElement("div");
+      body.className = "sect-body";
+      sect.parentNode.insertBefore(details, sect);
+      details.appendChild(summary);
+      details.appendChild(body);
+      body.appendChild(sect);
+    });
+  } catch (e) { console.warn("initMobileLayout failed", e); }
+
+  // Tool tabs
+  try {
+    const tools = document.getElementById("rcTools");
+    const wrap = document.getElementById("rcBlurWrap");
+    if (!tools || !wrap) return;
+    tools.addEventListener("click", (e) => {
+      const btn = e.target.closest(".rc-tool");
+      if (!btn) return;
+      tools.querySelectorAll(".rc-tool").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const tool = btn.dataset.tool;
+      wrap.classList.remove("tool-sub", "tool-logo", "tool-blur");
+      if (tool !== "all") wrap.classList.add("tool-" + tool);
+    });
+  } catch (e) { console.warn("tool tabs failed", e); }
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initMobileLayout);
+} else {
+  initMobileLayout();
 }
 
 /** Init preset UI handlers */
