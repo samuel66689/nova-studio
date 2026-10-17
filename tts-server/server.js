@@ -6,7 +6,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261018-diag1"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261018-diag2"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 const ALLOWED_VOICES = new Set(["my-MM-NilarNeural", "my-MM-ThihaNeural"]);
 // Gemini proxy: only these models, only generateContent on the official host
