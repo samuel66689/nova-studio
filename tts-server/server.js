@@ -8,6 +8,14 @@ const http = require("http");
 const PORT = process.env.PORT || 3000;
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 const ALLOWED_VOICES = new Set(["my-MM-NilarNeural", "my-MM-ThihaNeural"]);
+// Gemini proxy: only these models, only generateContent on the official host
+const GEMINI_HOST = "generativelanguage.googleapis.com";
+const ALLOWED_GEMINI_MODELS = new Set([
+  "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash",
+  "gemini-3.6-flash", "gemini-3.7-flash",
+  "gemini-2.0-flash", "gemini-2.0-flash-lite",
+  "gemini-1.5-flash", "gemini-1.5-pro",
+]);
 
 // --- simple per-IP rate limit: 60 TTS requests / minute ---
 const hits = new Map();
@@ -189,6 +197,53 @@ const server = http.createServer(async (req, res) => {
         console.error("tts error:", msg);
         res.writeHead(502, { "Content-Type": "text/plain" });
         res.end("tts failed: " + msg);
+      }
+    });
+    return;
+  }
+
+  if (req.method === "POST" && req.url === "/api/gemini") {
+    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
+      || req.socket.remoteAddress || "unknown";
+    if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 500 * 1024) req.destroy(); });
+    req.on("end", async () => {
+      try {
+        const data = JSON.parse(body || "{}");
+        const { model, key, geminiBody } = data;
+        // Validate model (prevent arbitrary model/endpoint abuse)
+        if (!model || !ALLOWED_GEMINI_MODELS.has(model)) {
+          res.writeHead(400); res.end("invalid model"); return;
+        }
+        if (!key || typeof key !== "string" || key.length < 10) {
+          res.writeHead(400); res.end("missing api key"); return;
+        }
+        if (!geminiBody || typeof geminiBody !== "object") {
+          res.writeHead(400); res.end("missing request body"); return;
+        }
+        // Forward to official Gemini API only.
+        // Key sent via x-goog-api-key header (never in URL, never logged).
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 90000);
+        try {
+          const url = `https://${GEMINI_HOST}/v1beta/models/${model}:generateContent`;
+          const gres = await fetch(url, {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+            body: JSON.stringify(geminiBody),
+          });
+          const text = await gres.text();
+          // Never log key or full body; forward status + body as-is
+          res.writeHead(gres.status, { "Content-Type": "application/json" });
+          res.end(text);
+        } finally { clearTimeout(timer); }
+      } catch (e) {
+        // Do not expose internals or key material
+        const isAbort = e.name === "AbortError";
+        res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
+        res.end(isAbort ? "gemini upstream timeout" : "gemini proxy error");
       }
     });
     return;
