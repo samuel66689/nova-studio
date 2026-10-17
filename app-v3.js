@@ -62,7 +62,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261018f";
+} from "./js/api.js?v=20261018g";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -1552,28 +1552,59 @@ const RC_STAGE_MAP = {
   3: ["rcSyncOnly", "rcProgress", "rcProgressLabel", "rcResults", "rcLog",
       "rcMemBox", "rcMemText", "rcMemView", "rcMemSave", "rcMemDel"],
 };
+function setUiMode(mode) {
+  rcUiMode = mode;
+  document.querySelectorAll(".rc-mode-btn").forEach(x => {
+    x.classList.toggle("active", x.dataset.mode === mode);
+  });
+  const bottomNav = document.getElementById("rcWizardBottomNav");
+  if (bottomNav) bottomNav.style.display = mode === "wizard" ? "" : "none";
+  const menuMode = document.getElementById("rcMenuMode");
+  if (menuMode) menuMode.textContent = "Current: " + (mode === "wizard" ? "Beginner" : "Pro");
+  const menu = document.getElementById("rcMenu");
+  if (menu) menu.style.display = "none";
+  if (mode === "wizard") {
+    setWizStage(0);
+  } else {
+    applyStageVisibility();
+  }
+  console.log("[mode]", mode);
+}
+
 function initModeSwitch() {
   try {
     const btns = document.querySelectorAll(".rc-mode-btn");
-    const wizNav = document.getElementById("rcWizardNav");
     if (!btns.length) return;
     btns.forEach(b => {
-      b.addEventListener("click", () => {
-        btns.forEach(x => x.classList.remove("active"));
-        b.classList.add("active");
-        rcUiMode = b.dataset.mode;
-        if (wizNav) wizNav.style.display = rcUiMode === "wizard" ? "" : "none";
-        if (rcUiMode === "wizard") {
-          setWizStage(0); // start at first stage
-        } else {
-          applyStageVisibility(); // restore all
-        }
-        console.log("[mode]", rcUiMode);
-      });
+      if (b.dataset.bound) return;
+      b.dataset.bound = "1";
+      b.addEventListener("click", () => setUiMode(b.dataset.mode));
     });
-    // Back/Next navigation
-    const backBtn = document.getElementById("rcWizBack");
-    const nextBtn = document.getElementById("rcWizNext");
+    // Hamburger menu
+    const menuBtn = document.getElementById("rcMenuBtn");
+    const menu = document.getElementById("rcMenu");
+    if (menuBtn && menu && !menuBtn.dataset.bound) {
+      menuBtn.dataset.bound = "1";
+      menuBtn.addEventListener("click", () => {
+        menu.style.display = menu.style.display === "none" ? "" : "none";
+      });
+    }
+    // API Keys button -> trigger existing settings drawer
+    const apiBtn = document.getElementById("rcMenuApiKeys");
+    if (apiBtn && !apiBtn.dataset.bound) {
+      apiBtn.dataset.bound = "1";
+      apiBtn.addEventListener("click", () => {
+        const toggle = document.getElementById("settingsToggle");
+        if (toggle) {
+          toggle.checked = !toggle.checked;
+          toggle.dispatchEvent(new Event("change"));
+        }
+        menu.style.display = "none";
+      });
+    }
+    // Back/Next navigation (bottom)
+    const backBtn = document.getElementById("rcWizBackB");
+    const nextBtn = document.getElementById("rcWizNextB");
     if (backBtn && !backBtn.dataset.bound) {
       backBtn.dataset.bound = "1";
       backBtn.addEventListener("click", () => setWizStage(rcWizStage - 1));
@@ -1582,8 +1613,8 @@ function initModeSwitch() {
       nextBtn.dataset.bound = "1";
       nextBtn.addEventListener("click", () => setWizStage(rcWizStage + 1));
     }
-    // Wizard dots (visual only in Phase 2)
-    const steps = document.getElementById("rcWizSteps");
+    // Wizard dots (bottom nav)
+    const steps = document.getElementById("rcWizStepsB");
     if (steps && !steps.dataset.bound) {
       steps.dataset.bound = "1";
       RC_WIZ_STAGES.forEach((name, i) => {
@@ -1599,15 +1630,18 @@ function initModeSwitch() {
 function setWizStage(n) {
   n = Math.max(0, Math.min(3, n));
   rcWizStage = n;
-  // Update dots
-  const dots = document.querySelectorAll("#rcWizSteps .rc-wiz-dot");
+  // Update dots (bottom nav)
+  const dots = document.querySelectorAll("#rcWizStepsB .rc-wiz-dot");
   dots.forEach((d, i) => {
     d.classList.toggle("active", i === n);
     d.classList.toggle("done", i < n);
   });
-  // Update Back/Next labels
-  const back = document.getElementById("rcWizBack");
-  const next = document.getElementById("rcWizNext");
+  // Update stage name
+  const stageName = document.getElementById("rcWizStageName");
+  if (stageName) stageName.textContent = `${n + 1}/4: ${RC_WIZ_STAGES[n]}`;
+  // Update Back/Next (bottom nav)
+  const back = document.getElementById("rcWizBackB");
+  const next = document.getElementById("rcWizNextB");
   if (back) back.disabled = (n === 0);
   if (next) next.textContent = (n === 3) ? "✓ Done" : "Next ▶";
   // Show/hide stage elements
