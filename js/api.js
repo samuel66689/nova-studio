@@ -114,6 +114,16 @@ export async function idbDel(key) {
     tx.onerror = () => rej(tx.error);
   });
 }
+/** List all keys in the store (for project/preset enumeration). */
+export async function idbKeys() {
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, "readonly");
+    const q = tx.objectStore(IDB_STORE).getAllKeys();
+    q.onsuccess = () => res(q.result || []);
+    q.onerror = () => rej(q.error);
+  });
+}
 
 export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
