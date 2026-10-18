@@ -361,6 +361,11 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", o
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
       if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
       if (!segs.length) throw new Error("script format မမှန်ပါ — segment မရှိပါ");
+      // Diagnostic: log if segments have empty text (for debugging)
+      try {
+        const emptyCount = segs.filter(s => !hasRealText(s.text)).length;
+        if (emptyCount > 0) console.warn(`[script-diag] ${emptyCount}/${segs.length} segments have no real text`);
+      } catch (_) {}
       return segs;
     } catch (e) {
       lastErr = e;
@@ -690,6 +695,14 @@ export function validateRecapSegments(segs, opts = {}) {
   if (!Array.isArray(segs) || !segs.length) {
     return { ok: false, errors: ["Segment မရှိပါ"] };
   }
+  // Fail fast: reject segments with no real text (e.g. only "]" or punctuation)
+  const emptySegs = [];
+  for (let i = 0; i < segs.length; i++) {
+    if (!hasRealText(segs[i] && segs[i].text)) emptySegs.push(i + 1);
+  }
+  if (emptySegs.length) {
+    return { ok: false, errors: [`စာသားမပါတဲ့ segments: ${emptySegs.slice(0,5).join(", ")}${emptySegs.length > 5 ? "..." : ""} (${emptySegs.length}/${segs.length}) — Script ပြန်ထုတ်ပါ`] };
+  }
   segs.forEach((s, i) => {
     const n = i + 1;
     const os = s.outputStart ?? s.start;
@@ -746,7 +759,15 @@ export function validateRecapSegments(segs, opts = {}) {
  * - Lines that look like segment attempts (contain [ ] or timestamp-like text)
  *   but fail to parse are reported as errors with line numbers.
  */
-export function parseRecapSegmentsStrict(text) {
+export // Check if text contains real content (not just punctuation/brackets/whitespace)
+// Returns true if there's at least one letter/number character
+function hasRealText(s) {
+  if (!s) return false;
+  // Must contain at least one letter (any language) or digit
+  return /[\p{L}\p{N}]/u.test(s);
+}
+
+function parseRecapSegmentsStrict(text) {
   const segments = [];
   const errors = [];
   const lines = (text || "").split("\n");
@@ -765,7 +786,7 @@ export function parseRecapSegmentsStrict(text) {
       if (a === null) errors.push(`Line ${lineNo}: source start "${m[1]}" မမှန်ပါ`);
       else if (b === null) errors.push(`Line ${lineNo}: source end "${m[2]}" မမှန်ပါ`);
       else if (b <= a) errors.push(`Line ${lineNo}: source end \u101e\u100a\u103a start \u1011\u1000\u103a \u1000\u103c\u102e\u1038\u101b\u1019\u101a\u103a`);
-      else if (!m[3].trim()) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
+      else if (!hasRealText(m[3])) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
       else segments.push({ sourceStart: a, sourceEnd: b, text: m[3].trim() });
       return;
     }
@@ -775,7 +796,7 @@ export function parseRecapSegmentsStrict(text) {
       if (a === null) errors.push(`Line ${lineNo}: start "${m[1]}" မမှန်ပါ`);
       else if (b === null) errors.push(`Line ${lineNo}: end "${m[2]}" မမှန်ပါ`);
       else if (b <= a) errors.push(`Line ${lineNo}: end သည် start ထက် ကြီးရမယ်`);
-      else if (!m[3].trim()) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
+      else if (!hasRealText(m[3])) errors.push(`Line ${lineNo}: စာသား မရှိပါ`);
       else segments.push({ outputStart: a, outputEnd: b, start: a, end: b, text: m[3].trim() });
     } else if (looksLikeSeg.test(t)) {
       errors.push(`Line ${lineNo}: format မမှန်ပါ`);
