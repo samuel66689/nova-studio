@@ -610,10 +610,21 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
         </select>
       </div>
       <div>
+        <label>Recap အရှည် (မူရင်း %)</label>
+        <select id="rcDurationPct">
+          <option value="10">10% — အတို</option>
+          <option value="20">20%</option>
+          <option value="30">30%</option>
+          <option value="50" selected>50% — ပုံမှန်</option>
+          <option value="80">80% — အရှည်</option>
+        </select>
+        <div id="rcDurationHint" style="font-size:12px;opacity:0.7;margin-top:4px;"></div>
+      </div>
+      <div>
         <label>AI ကြည့်ပုံ</label>
         <select id="rcWatchMode">
-          <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
           <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
+          <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
         </select>
       </div>
     </div>
