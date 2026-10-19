@@ -1356,9 +1356,6 @@ function collectPresetSettings() {
     style_: ($("rcStyle") || {}).value || "",
     lang: ($("rcLang") || {}).value || "",
     flip: ($("rcFlip") || {}).checked || false,
-    blurRegions: rcBlurRegions.map(r => ({ x: r.x, y: r.y, w: r.w, h: r.h, t0: r.t0, t1: r.t1, strength: r.strength })),
-    blurVideoName: (typeof rcFile !== "undefined" && rcFile && rcFile.name) || null,
-    blurVideoSize: (typeof rcFile !== "undefined" && rcFile && rcFile.size) || null,
   };
 }
 
@@ -1404,36 +1401,6 @@ async function applyPresetSettings(settings) {
   } else {
     rcLogoImg = null; rcLogoImageId = null;
     const w = $("rcLogoWrap"); if (w) w.style.display = "none";
-  }
-  // Blur regions: restore with video safety check
-  if (settings.blurRegions && Array.isArray(settings.blurRegions)) {
-    const curName = (typeof rcFile !== "undefined" && rcFile && rcFile.name) || null;
-    const curSize = (typeof rcFile !== "undefined" && rcFile && rcFile.size) || null;
-    const savedName = settings.blurVideoName || null;
-    const savedSize = settings.blurVideoSize || null;
-    const sameVideo = curName && savedName && curName === savedName && curSize === savedSize;
-    let applyBlur = true;
-    if (settings.blurRegions.length > 0 && !sameVideo) {
-      const msg = savedName
-        ? `Blur boxes တွေက "${savedName}" အတွက် သိမ်းထားတာ.\nလက်ရှိ video နဲ့ မတူဘူး.\nBlur နေရာတွေ ပြန်ချိန်ရမယ်. ဆက်လုပ်မလား?`
-        : `Blur boxes (${settings.blurRegions.length} ခု) တွေ့တယ်.\nVideo အသစ်မို့ နေရာ ပြန်ချိန်ရမယ်. ဆက်လုပ်မလား?`;
-      applyBlur = confirm(msg);
-    }
-    if (applyBlur) {
-      rcBlurRegions.length = 0;
-      try { document.querySelectorAll(".rcbox").forEach(el => el.remove()); } catch (_) {}
-      for (const r of settings.blurRegions) {
-        if (typeof r.x === "number" && typeof r.y === "number") {
-          rcBlurRegions.push({
-            x: r.x, y: r.y, w: r.w || 0.2, h: r.h || 0.2,
-            t0: r.t0 || 0, t1: r.t1 || 0,
-            strength: Math.max(1, Math.min(30, r.strength || 15)),
-          });
-        }
-      }
-      try { rcRenderBlurList(); } catch (_) {}
-      try { if (typeof rcShowBlurPreview === "function") rcShowBlurPreview(); } catch (_) {}
-    }
   }
   // Refresh layout
   try { if (typeof rcApplyLayout === "function") rcApplyLayout(); } catch (_) {}
