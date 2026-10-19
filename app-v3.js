@@ -7,12 +7,6 @@ import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patc
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
 
 // Preview layout: update on video load and ratio/res change
-/** Refresh preview layout (safe wrapper) */
-function rcApplyLayout() {
-  try { if (typeof rcShowBlurPreview === "function") rcShowBlurPreview(); } catch (_) {}
-  try { if (typeof rcRenderBlurList === "function") rcRenderBlurList(); } catch (_) {}
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   const pv = $("rcBlurPrev");
   if (pv) pv.addEventListener("loadedmetadata", (e) => {
