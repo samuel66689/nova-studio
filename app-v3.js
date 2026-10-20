@@ -230,7 +230,7 @@ const TTS_SERVER = "https://nova-tts.onrender.com";
 /** Server-side Edge TTS (VPN-proof, native Burmese voices). Resolves to audio/mpeg Blob. */
 async function serverEdgeTTS(text, voice) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 120000);
+  const timer = setTimeout(() => ctrl.abort(), 60000); // 60s: healthy TTS measures 8-12s; fail sooner to browser fallback
   try {
     const res = await fetch(TTS_SERVER + "/api/tts", {
       method: "POST",
@@ -2366,13 +2366,27 @@ $("startRecap").addEventListener("click", async () => {
 
     // ---- step 4: TTS per segment ----
     setStep("tts", "run");
+    // Circuit breaker: if the TTS server fails 3 times in a row, stop paying
+    // its timeout on every remaining piece and use the browser path only.
+    let srvTtsFailStreak = 0;
+    let srvTtsDisabled = false;
     async function ttsPiece(text) {
-      try {
-        return await serverEdgeTTS(text, voice);
-      } catch (e1) {
-        log("rc", "\u26A0\uFE0F server TTS \u1019\u101B\u1015\u102B — browser Edge \u1014\u1032\u1037 \u1015\u103C\u1014\u103A\u1005\u1019\u103A\u1038\u1019\u101A\u103A\u2026", "err");
-        return await edgeTTS(text, voice);
+      if (!srvTtsDisabled) {
+        try {
+          const b = await serverEdgeTTS(text, voice);
+          srvTtsFailStreak = 0;
+          return b;
+        } catch (e1) {
+          srvTtsFailStreak++;
+          if (srvTtsFailStreak >= 3) {
+            srvTtsDisabled = true;
+            log("rc", "⚠️ server TTS ၃ ခါ ဆက်တိုက် မရပါ — ကျန် အပိုင်းတွေကို browser Edge နဲ့ပဲ လုပ်ပါမယ်", "err");
+          } else {
+            log("rc", "⚠️ server TTS မရပါ — browser Edge နဲ့ ပြန်စမ်းမယ်…", "err");
+          }
+        }
       }
+      return await edgeTTS(text, voice);
     }
     stageStart("tts");
     log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (server TTS \u2014 ${voice})\u2026`);
