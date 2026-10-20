@@ -449,7 +449,7 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
   </div>
   <label class="icon-btn" for="settingsToggle" title="API Keys">⚙️</label>
 </header>
-<p class="tagline">Video tools တွေ browser ထဲမှာပဲ လုပ်မယ် — server မလို, upload မလို</p>
+<p class="tagline">Video edit က browser ထဲမှာပဲ — AI script နဲ့ အသံအတွက်တော့ server/API သုံးပါတယ်</p>
 
 <!-- ======= SETTINGS DRAWER (API KEYS) ======= -->
 <div class="settings-drawer">
@@ -466,7 +466,7 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
       <button id="clearKeys" class="ghost">🗑 ဖျက်မယ်</button>
     </div>
     <div class="hint warn" id="keyStatus">⚠️ Key မထည့်ရသေးပါ</div>
-    <div class="hint">Keys တွေက ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — ဘယ် server မှာမှ မတင်ဘူး။</div>
+    <div class="hint">Keys တွေကို ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — server ပေါ်မှာ မသိမ်းဘူး။ ဒါပေမယ့် AI သုံးတဲ့အခါ key ကို app ရဲ့ proxy server မှတစ်ဆင့် Google ဆီ ပို့ပေးရပါတယ် (proxy က key ကို မသိမ်းထားပါဘူး)။</div>
   </div>
 </div>
 
@@ -675,6 +675,9 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
         <div style="margin-top:6px;">
           <button id="rcMemView" class="ghost" style="font-size:12px;">📓 Memory ကြည့်/ပြင်</button>
           <button id="rcMemDel" class="ghost" style="font-size:12px;">🗑 Memory ဖျက်</button>
+          <button id="rcMemExport" class="ghost" style="font-size:12px;">📤 Memory Export</button>
+          <button id="rcMemImport" class="ghost" style="font-size:12px;">📥 Memory Import</button>
+          <input type="file" id="rcMemImportFile" accept=".json,application/json" style="display:none;">
         </div>
         <div id="rcMemBox" style="display:none;margin-top:6px;">
           <textarea id="rcMemText" rows="6" style="width:100%;font-size:12px;" placeholder="Memory..."></textarea>
