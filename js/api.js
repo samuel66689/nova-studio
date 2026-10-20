@@ -191,15 +191,17 @@ async function geminiViaServer(model, key, geminiBody) {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      // 502/504: the proxy reached Gemini but the upstream timed out or the
-      // proxy itself failed. This is NOT a client network failure, and a
-      // direct fallback would only produce a misleading geo-location error
-      // from a blocked IP. Mark it so callers surface it instead.
-      const isUpstream = res.status === 502 || res.status === 504;
+      // Any 5xx: the proxy answered, but the upstream Gemini request timed
+      // out, the proxy itself failed, or the proxy forwarded a Google 5xx
+      // (the server forwards Google's status verbatim). This is NOT a client
+      // network failure, and a direct fallback would only produce a
+      // misleading geo-location error from a blocked IP. Mark it so callers
+      // surface it instead of falling back.
+      const isUpstream = res.status >= 500 && res.status <= 599;
       const err = new Error(isUpstream
         ? (res.status === 504
           ? "Gemini proxy (" + model + ") timeout (504) — Gemini က process လုပ်တာ ကြာနေပါတယ်. ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ"
-          : "Gemini proxy (" + model + ") error 502 — server ပြဿနာ ဖြစ်နေပါတယ်. ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ")
+          : "Gemini proxy (" + model + ") error " + res.status + " — server ပြဿနာ ဖြစ်နေပါတယ်. ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ")
         : "Gemini proxy (" + model + ") error " + res.status + ": " + t.slice(0, 180));
       err.isApiError = res.status >= 400 && res.status < 500;
       err.isUpstreamError = isUpstream;
