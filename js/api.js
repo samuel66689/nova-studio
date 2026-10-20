@@ -181,7 +181,7 @@ const GEMINI_PROXY = "https://nova-tts.onrender.com/api/gemini";
  */
 async function geminiViaServer(model, key, geminiBody) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 95000);
+  const timer = setTimeout(() => ctrl.abort(), 250000); // 250s: just above the proxy's 240s so its 504 message arrives
   try {
     const res = await fetch(GEMINI_PROXY, {
       method: "POST",
@@ -191,8 +191,19 @@ async function geminiViaServer(model, key, geminiBody) {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      const err = new Error("Gemini proxy (" + model + ") error " + res.status + ": " + t.slice(0, 180));
+      // 502/504: the proxy reached Gemini but the upstream timed out or the
+      // proxy itself failed. This is NOT a client network failure, and a
+      // direct fallback would only produce a misleading geo-location error
+      // from a blocked IP. Mark it so callers surface it instead.
+      const isUpstream = res.status === 502 || res.status === 504;
+      const err = new Error(isUpstream
+        ? (res.status === 504
+          ? "Gemini proxy (" + model + ") timeout (504) — Gemini က process လုပ်တာ ကြာနေပါတယ်. ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ"
+          : "Gemini proxy (" + model + ") error 502 — server ပြဿနာ ဖြစ်နေပါတယ်. ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ")
+        : "Gemini proxy (" + model + ") error " + res.status + ": " + t.slice(0, 180));
       err.isApiError = res.status >= 400 && res.status < 500;
+      err.isUpstreamError = isUpstream;
+      err.status = res.status;
       throw err;
     }
     return await res.json();
@@ -217,6 +228,10 @@ async function geminiGenerateParts(model, systemText, parts, maxTokens) {
   try {
     j = await geminiViaServer(model, gemini, body);
   } catch (proxyErr) {
+    // Upstream errors (502/504): proxy answered but Gemini timed out.
+    // Never fall back to direct — it would fail with a misleading
+    // unsupported-location error from a geo-blocked IP.
+    if (proxyErr && proxyErr.isUpstreamError) throw proxyErr;
     // Fallback to direct only on network failures, not API errors
     if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
     let res;
@@ -345,6 +360,7 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", o
       try {
         j = await geminiViaServer(m, gemini, body);
       } catch (proxyErr) {
+        if (proxyErr && proxyErr.isUpstreamError) throw proxyErr;
         if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
         const res = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",
@@ -392,6 +408,7 @@ export async function geminiTranscribe(mp3Blob) {
       try {
         j = await geminiViaServer(m, gemini, body);
       } catch (proxyErr) {
+        if (proxyErr && proxyErr.isUpstreamError) throw proxyErr;
         if (!isNetworkFailure(proxyErr) && proxyErr.isApiError) throw proxyErr;
         const res = await fetch(
           "https://generativelanguage.googleapis.com/v1beta/models/" + m + ":generateContent",

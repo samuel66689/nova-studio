@@ -255,7 +255,7 @@ const server = http.createServer(async (req, res) => {
         console.log(`[gemini-diag-start] id=${diagId} model=${model}`);
         // Log only: model, origin IP prefix, status. NEVER key, headers, or prompt.
         const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 90000);
+        const timer = setTimeout(() => ctrl.abort(), 240000); // 240s: long video/scene analysis can exceed 90s
         try {
           const url = `https://${GEMINI_HOST}/v1beta/models/${model}:generateContent`;
           const gres = await fetch(url, {

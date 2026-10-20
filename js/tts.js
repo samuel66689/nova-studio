@@ -40,7 +40,7 @@ export function edgeTTS(text, voice) {
     const ts = new Date().toString();
     const timer = setTimeout(() => {
       finish(false, new Error("Edge TTS အချိန်လွန်သွားပါတယ် (timeout) — ပြန်ကြိုးစားပါ"));
-    }, 90000);
+    }, 45000); // 45s: one short piece synthesizes in seconds when the socket works
 
     ws.onopen = () => {
       ws.send(
