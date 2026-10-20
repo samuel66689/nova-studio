@@ -393,7 +393,58 @@ export async function geminiRecapFromVideoFile(fileUri, style, extraPrompt="", o
 }
 
 /** Gemini fallback transcription. Returns [{start,end,text}]. */
-export async function geminiTranscribe(mp3Blob) {
+// ---- MP3 frame-aware splitting for transcription ----
+// The Gemini proxy caps request bodies at 5MB, and base64 inflates audio by
+// ~1.33x, so a blob over ~3.5MB always failed with HTTP 413. Split large MP3s
+// at frame boundaries into <=3MB parts; each part is a valid standalone MP3.
+const MP3_BR_V1_L3 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0];
+const MP3_BR_V2_L3 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0];
+const MP3_SR_TAB = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] };
+function mp3FrameAt(u8, off) {
+  if (off + 4 > u8.length) return null;
+  if (u8[off] !== 0xFF || (u8[off + 1] & 0xE0) !== 0xE0) return null;
+  const ver = (u8[off + 1] >> 3) & 3; // 3=MPEG1, 2=MPEG2, 0=MPEG2.5, 1=reserved
+  if (ver === 1) return null;
+  if (((u8[off + 1] >> 1) & 3) !== 1) return null; // Layer III only
+  const brIdx = (u8[off + 2] >> 4) & 0xF;
+  const srIdx = (u8[off + 2] >> 2) & 3;
+  if (brIdx === 0 || brIdx === 15 || srIdx === 3) return null;
+  const kbps = (ver === 3 ? MP3_BR_V1_L3 : MP3_BR_V2_L3)[brIdx];
+  const sr = MP3_SR_TAB[ver][srIdx];
+  const pad = (u8[off + 2] >> 1) & 1;
+  const len = Math.floor((ver === 3 ? 144000 : 72000) * kbps / sr) + pad;
+  if (len < 24 || off + len > u8.length) return null;
+  return { len, dur: (ver === 3 ? 1152 : 576) / sr };
+}
+function splitMp3ByFrames(u8, maxBytes) {
+  let scanFrom = 0;
+  if (u8.length > 10 && u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) { // "ID3"
+    scanFrom = 10 + (((u8[6] & 0x7F) << 21) | ((u8[7] & 0x7F) << 14) | ((u8[8] & 0x7F) << 7) | (u8[9] & 0x7F));
+  }
+  let off = -1;
+  for (let i = scanFrom; i + 4 <= u8.length; i++) { if (mp3FrameAt(u8, i)) { off = i; break; } }
+  if (off < 0) return null;
+  const parts = [];
+  let partFrom = 0; // first part keeps any ID3 prefix
+  let partDur = 0, t = 0, frames = 0;
+  let cur = off;
+  while (cur < u8.length) {
+    const fr = mp3FrameAt(u8, cur);
+    if (!fr) break;
+    if (frames > 0 && (cur + fr.len) - partFrom > maxBytes) {
+      parts.push({ from: partFrom, to: cur, startSec: t - partDur, durSec: partDur });
+      partFrom = cur; partDur = 0; frames = 0;
+    }
+    partDur += fr.dur; t += fr.dur; frames++;
+    cur += fr.len;
+  }
+  if (frames > 0) parts.push({ from: partFrom, to: cur, startSec: t - partDur, durSec: partDur });
+  // Sanity: frames must cover most of the file, else this was not a clean MP3.
+  if (!parts.length || cur < u8.length * 0.9) return null;
+  return parts;
+}
+
+async function geminiTranscribeOnce(mp3Blob) {
   const b64 = await blobToBase64(mp3Blob);
   const { gemini } = getKeys();
   if (!gemini) throw new Error("Gemini API key မထည့်ရသေးပါ");
@@ -425,19 +476,45 @@ export async function geminiTranscribe(mp3Blob) {
   if (!j) throw terr || new Error("Gemini transcribe မအောင်မြင်ပါ");
   const text = ((j.candidates || [])[0] || {}).content?.parts
     ?.map((p) => p.text || "").join("") || "";
-  const lines = text.split("\n");
   const segs = [];
-  for (const ln of lines) {
+  for (const ln of text.split("\n")) {
     const m = ln.match(/\[(\d{1,3}:\d{2}(?::\d{2})?)\]\s*(.+)/);
     if (m) {
       const start = parseClock(m[1]);
-      if (start !== null && m[2].trim()) segs.push({ start, end: 0, text: m[2].trim() });
+      if (start !== null && m[2].trim()) segs.push({ start, text: m[2].trim() });
     }
   }
+  return segs;
+}
+
+/** Gemini fallback transcription. Returns [{start,end,text}].
+ * Large inputs are split at MP3 frame boundaries so no single proxy
+ * request exceeds the 5MB body limit (previously a guaranteed 413). */
+export async function geminiTranscribe(mp3Blob) {
+  const MAX_BLOB = 3 * 1024 * 1024; // base64 ~4MB, safely under the proxy cap
+  let raw = null;
+  if (mp3Blob.size <= MAX_BLOB) {
+    raw = await geminiTranscribeOnce(mp3Blob);
+  } else {
+    const u8 = new Uint8Array(await mp3Blob.arrayBuffer());
+    const parts = splitMp3ByFrames(u8, MAX_BLOB);
+    if (!parts || parts.length < 2) {
+      raw = await geminiTranscribeOnce(mp3Blob); // unparseable stream: previous behavior
+    } else {
+      raw = [];
+      for (const part of parts) {
+        const sub = new Blob([u8.subarray(part.from, part.to)], { type: "audio/mpeg" });
+        const segs = await geminiTranscribeOnce(sub);
+        for (const s of segs) raw.push({ start: s.start + part.startSec, text: s.text });
+      }
+      raw.sort((a, b) => a.start - b.start);
+    }
+  }
+  if (!raw || !raw.length) throw new Error("Gemini transcribe က စာမထွက်ပါ");
+  const segs = raw.map((s) => ({ start: s.start, end: 0, text: s.text }));
   for (let i = 0; i < segs.length; i++) {
     segs[i].end = (i + 1 < segs.length) ? segs[i + 1].start : segs[i].start + 5;
   }
-  if (!segs.length) throw new Error("Gemini transcribe က စာမထွက်ပါ");
   return segs;
 }
 

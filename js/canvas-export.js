@@ -740,8 +740,14 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     });
     video.pause();
 
-    // Freeze remaining time (if audio longer than video clip)
-    const freezeTime = d - playTime;
+    // Freeze remaining time (if audio longer than video clip).
+    // Use the ACTUAL elapsed play time, not the planned playTime: if the
+    // play loop exited early (video.ended) or late (slow decode), using
+    // playTime would make this segment longer/shorter than the audio (d),
+    // drifting every following segment out of sync. Actual elapsed keeps
+    // play + freeze == d exactly.
+    const playElapsed = (performance.now() - t0) / 1000;
+    const freezeTime = d - playElapsed;
     if (freezeTime > 0.1) {
       // Keep last frame, draw with slight zoom
       const fz0 = performance.now();
@@ -750,7 +756,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
           const el = (performance.now() - fz0) / 1000;
           const zp = Math.min(el / Math.max(freezeTime, 0.1), 1);
           const zs = 1 + 0.12 * zp;
-          S.t = video.currentTime; S.text = pickChunk(s.text, playTime + el, d);
+          S.t = video.currentTime; S.text = pickChunk(s.text, playElapsed + el, d);
           drawScene(ctx, width, height, S, zs);
           if (el < freezeTime) {
             requestAnimationFrame(check);
