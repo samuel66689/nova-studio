@@ -18,10 +18,12 @@ document.addEventListener("DOMContentLoaded", () => {
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
   $("rcRes")?.addEventListener("change", rcApplyLayout);
+  $("rcFit")?.addEventListener("change", rcApplyLayout);
   // Video pause warning (Chrome background tab)
   window.__novaOnVideoPause = () => {
+    // No alert() here: this fires DURING canvas recording, and a blocking
+    // alert freezes frame capture while the recorder keeps running (A/V skew).
     log("rc", "⚠️ Video ရပ် သွား တယ်! Chrome tab ပြန် ဝင် ပါ — မ ထွက် ပါ နဲ့", "err");
-    alert("⚠️ Video ရပ် သွား တယ်!\nChrome tab ထဲ ပြန် ဝင် ပါ။\nSync ပြီးသည် အထိ မ ထွက် ပါ နဲ့။");
   };
   $("rcSeriesOn")?.addEventListener("change", (e) => {
     $("rcSeriesBox").style.display = e.target.checked ? "block" : "none";
@@ -51,6 +53,39 @@ document.addEventListener("DOMContentLoaded", () => {
     delMemory(t);
     $("rcMemText").value = "";
     refreshSeriesDropdown();
+  });
+  $("rcMemExport")?.addEventListener("click", () => {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("nova_series_mem_")) data[k] = localStorage.getItem(k);
+    }
+    const count = Object.keys(data).length;
+    if (!count) { alert("Export လုပ်စရာ Series Memory မရှိပါ"); return; }
+    const payload = { app: "nova-studio", kind: "series-memory", version: 1, exportedAt: new Date().toISOString(), memories: data };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "nova-series-memory.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    log("rc", `📤 Series Memory ${count} ခု export လုပ်ပြီးပါပြီ`, "ok");
+  });
+  $("rcMemImport")?.addEventListener("click", () => $("rcMemImportFile")?.click());
+  $("rcMemImportFile")?.addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    try {
+      const j = JSON.parse(await f.text());
+      const mem = (j && typeof j === "object" && j.memories && typeof j.memories === "object") ? j.memories : j;
+      const keys = Object.keys(mem || {}).filter((k) => k.startsWith("nova_series_mem_") && typeof mem[k] === "string");
+      if (!keys.length) { alert("Import ဖိုင်ထဲမှာ Series Memory မတွေ့ပါ"); return; }
+      if (!confirm(`Series Memory ${keys.length} ခု import လုပ်မယ် — တူညီတဲ့ ခေါင်းစဉ်ဆို အစားထိုးပါမယ်။ ဆက်လုပ်မလား?`)) return;
+      for (const k of keys) localStorage.setItem(k, mem[k]);
+      refreshSeriesDropdown();
+      alert(`Series Memory ${keys.length} ခု import ပြီးပါပြီ ✅`);
+    } catch (err) { alert("Import မရပါ: " + (err.message || err)); }
   });
   rcApplyLayout();
 });
@@ -309,7 +344,7 @@ $("startCut").addEventListener("click", async () => {
       const data = await ff.readFile(outName);
       await ff.deleteFile(outName);
       const blob = new Blob([data], { type: "video/mp4" });
-      const fname = cutFile.name.replace(/\.[^.]+$/, "") + "_p" + (i + 1) + ".mp4";
+      const fname = cutFile.name.replace(/\.[^.]+$/, "") + "_p" + String(i + 1).padStart(Math.max(2, String(total).length), "0") + ".mp4";
       const { row, anchor } = dlRow(fname, blob, "video/mp4", "cut");
       $("cutResults").appendChild(row);
       anchors.push(anchor);
@@ -1206,6 +1241,10 @@ function rcApplyLayout() {
     w.style.aspectRatio = width + " / " + height;
     w.style.maxWidth = width >= height ? "560px" : "340px";
   }
+  // Preview must render the video exactly like export does (cover = crop,
+  // contain = letterbox) so blur/logo/subtitle positions line up 1:1.
+  const pv = $("rcBlurPrev");
+  if (pv) pv.style.objectFit = ((($("rcFit") || {}).value || "cover") === "contain") ? "contain" : "cover";
 }
 
 /** Story Memory: localStorage per series title */
@@ -1784,6 +1823,21 @@ function getSeriesInfo() {
   const isEnd = part.toLowerCase() === "end";
   return { title, part: isEnd ? "End" : part, isEnd };
 }
+/** Validate Series inputs when Series mode is ON.
+ * A run with Series ON but no valid part number would save story memory
+ * under an empty/invalid part label and corrupt the memory structure,
+ * so require: title + (positive integer part | "end"). */
+function validateSeriesInputs() {
+  if (!(($("rcSeriesOn") || {}).checked)) return { ok: true };
+  const title = (($("rcSeriesTitle") || {}).value || "").trim();
+  const part = (($("rcSeriesPart") || {}).value || "").trim();
+  if (!title) return { ok: false, error: "Series mode ဖွင့်ထားရင် ဇာတ်လမ်းခေါင်းစဉ် ထည့်ပါ" };
+  if (part.toLowerCase() === "end") return { ok: true };
+  if (!/^\d+$/.test(part) || parseInt(part, 10) < 1) {
+    return { ok: false, error: "Series mode ဖွင့်ထားရင် အပိုင်းနံပါတ် ထည့်ပါ (ဥပမာ 1, 2, 3) — နောက်ဆုံးပိုင်းဆို \"end\"" };
+  }
+  return { ok: true };
+}
 /** Build series prompt addition */
 function seriesPromptExtra() {
   const s = getSeriesInfo();
@@ -1894,7 +1948,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
@@ -2106,9 +2160,11 @@ $("previewVoice").addEventListener("click", async () => {
 
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
-  acquireWakeLock();
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  const sv = validateSeriesInputs();
+  if (!sv.ok) { alert(sv.error); log("rc", "❌ " + sv.error, "err"); return; }
+  acquireWakeLock();
   const lang = $("rcLang").value;
   const voice = $("rcVoice").value;
   setBusy(["startRecap"], true);
@@ -2525,7 +2581,7 @@ $("startRecap").addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur } = await canvasDubSync(rcFile, segsWithAudio, {
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
@@ -2643,5 +2699,6 @@ $("startRecap").addEventListener("click", async () => {
   } finally {
     setProgressHandler(null);
     setBusy(["startRecap"], false);
+    releaseWakeLock();
   }
 });
