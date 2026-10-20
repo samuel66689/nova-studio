@@ -181,7 +181,7 @@ const GEMINI_PROXY = "https://nova-tts.onrender.com/api/gemini";
  */
 async function geminiViaServer(model, key, geminiBody) {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 95000);
+  const timer = setTimeout(() => ctrl.abort(), 250000); // 250s: just above the proxy's 240s so its 504 message arrives
   try {
     const res = await fetch(GEMINI_PROXY, {
       method: "POST",
