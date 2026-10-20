@@ -150,8 +150,23 @@ const server = http.createServer(async (req, res) => {
       || req.socket.remoteAddress || "unknown";
     if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 50 * 1024 * 1024) req.destroy(); });
+    let mixRejected = false;
+    req.on("data", (c) => {
+      if (mixRejected) return;
+      body += c;
+      if (body.length > 50 * 1024 * 1024) {
+        mixRejected = true;
+        // Clean 413 first (like /api/gemini): bare req.destroy() would surface
+        // as ECONNRESET on the client with no usable error.
+        if (!res.writableEnded) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("request too large (max 50MB)");
+        }
+        req.destroy();
+      }
+    });
     req.on("end", async () => {
+      if (mixRejected) return; // already answered 413
       try {
         const data = JSON.parse(body || "{}");
         const segs = data.segments || [];
@@ -180,8 +195,11 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
         res.end(audio);
       } catch (e) {
+        // Generic message to the client: e.message may contain ffmpeg stderr
+        // with server-internal /tmp paths — detail stays in the server log.
+        console.error("mix error:", (e.message || e).toString().slice(0, 500));
         res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("mix error: " + (e.message || e).slice(0, 300));
+        res.end("mix failed");
       }
     });
     return;
@@ -192,8 +210,23 @@ const server = http.createServer(async (req, res) => {
       || req.socket.remoteAddress || "unknown";
     if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
     let body = "";
-    req.on("data", (c) => { body += c; if (body.length > 30000) req.destroy(); });
+    let ttsRejected = false;
+    req.on("data", (c) => {
+      if (ttsRejected) return;
+      body += c;
+      if (body.length > 30000) {
+        ttsRejected = true;
+        // Clean 413 first (like /api/gemini): bare req.destroy() would surface
+        // as ECONNRESET on the client with no usable error.
+        if (!res.writableEnded) {
+          res.writeHead(413, { "Content-Type": "text/plain" });
+          res.end("request too large (max 30KB)");
+        }
+        req.destroy();
+      }
+    });
     req.on("end", async () => {
+      if (ttsRejected) return; // already answered 413
       try {
         const { text, voice } = JSON.parse(body || "{}");
         if (!text || !String(text).trim()) { res.writeHead(400); res.end("empty text"); return; }
@@ -205,8 +238,10 @@ const server = http.createServer(async (req, res) => {
       } catch (e) {
         const msg = (e.message || e).toString().slice(0, 300);
         console.error("tts error:", msg);
+        // Generic message to the client: msg may contain a python traceback
+        // or server paths — detail stays in the server log only.
         res.writeHead(502, { "Content-Type": "text/plain" });
-        res.end("tts failed: " + msg);
+        res.end("tts failed");
       }
     });
     return;
@@ -326,6 +361,11 @@ const server = http.createServer(async (req, res) => {
     const chunks = [];
     let totalLen = 0;
     let rejected = false;
+    let bodyEnded = false;
+    // Client abort mid-upload ('close' without 'end') must not wedge the
+    // semaphore: one dropped mobile connection would otherwise 429 every
+    // later upload until the process restarts.
+    req.on("close", () => { if (!bodyEnded) releaseSemaphore(); });
     req.on("data", (c) => {
       if (rejected) return;
       totalLen += c.length;
@@ -343,7 +383,12 @@ const server = http.createServer(async (req, res) => {
       chunks.push(c);
     });
     req.on("end", async () => {
+      bodyEnded = true;
       if (rejected) return; // already handled 413
+      // Client disconnect during the (up to ~5 min) poll: stop polling and
+      // free the semaphore instead of holding it for the full duration.
+      let clientGone = false;
+      res.on("close", () => { clientGone = true; });
       try {
         const videoBuf = Buffer.concat(chunks);
         chunks.length = 0; // free originals
@@ -393,9 +438,19 @@ const server = http.createServer(async (req, res) => {
         } finally { clearTimeout(upTimer); }
         // Step 3: poll until ACTIVE (max ~5 min)
         for (let i = 0; i < 60; i++) {
+          if (clientGone) break; // client gave up — stop polling, free semaphore
           await new Promise((r) => setTimeout(r, 5000));
           try {
-            const sres = await fetch(`https://${GEMINI_HOST}/v1beta/${fName}`, { headers: H });
+            // Per-poll timeout: node fetch has no default timeout, so one hung
+            // Google response would otherwise stall this iteration forever.
+            const pollCtrl = new AbortController();
+            const pollTimer = setTimeout(() => pollCtrl.abort(), 30000);
+            let sres;
+            try {
+              sres = await fetch(`https://${GEMINI_HOST}/v1beta/${fName}`, {
+                headers: H, signal: pollCtrl.signal,
+              });
+            } finally { clearTimeout(pollTimer); }
             if (!sres.ok) continue;
             const sj = await sres.json();
             const state = sj.state || (sj.file && sj.file.state);
@@ -407,10 +462,10 @@ const server = http.createServer(async (req, res) => {
             if (state === "FAILED") { res.writeHead(502); res.end("processing failed"); return; }
           } catch (_) { /* retry */ }
         }
-        res.writeHead(504); res.end("processing timeout");
+        if (!clientGone) { res.writeHead(504); res.end("processing timeout"); }
       } catch (e) {
         const isAbort = e.name === "AbortError";
-        if (!res.writableEnded) {
+        if (!res.writableEnded && !clientGone) {
           res.writeHead(isAbort ? 504 : 502, { "Content-Type": "text/plain" });
           res.end(isAbort ? "upload timeout" : "upload proxy error");
         }
