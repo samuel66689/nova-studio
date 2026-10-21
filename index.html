@@ -692,6 +692,14 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
         <label>🔄 Video edit (auto)</label>
         <div class="chk"><input type="checkbox" id="rcFlip"><span>ဘယ်ညာလှန် (flip)</span></div>
         <div class="chk"><input type="checkbox" id="rcAudioFirst" checked><span>🎯 Audio-first sync (canvas) — အသံနဲ့ရုပ် ကိုက်</span></div>
+        <div style="margin-top:6px;">
+          <label>Sync နည်း (audio-first mode အတွက်သာ)</label>
+          <select id="rcSyncMethod" style="width:100%;">
+            <option value="A" selected>Method A — Current Sync (ပုံမှန် · အကြံပြု)</option>
+            <option value="B">Method B — Audio Master Timeline (စမ်းသပ်ဆဲ 🧪)</option>
+          </select>
+          <div class="hint">Method B က အသံ timeline ကို အချိန်ဇယား အတိအကျနဲ့ ထိန်းပြီး ရုပ်ကို လိုက်ညှိတဲ့ နည်းအသစ်ပါ — စမ်းသပ်ဆဲ ဖြစ်လို့ ပြဿနာတွေ့ရင် Method A ပြန်ပြောင်းပါ။</div>
+        </div>
       </div>
       <div>
         <label>Watermark စာသား</label>

@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261021a";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
-import { canvasExport, canvasRecapSync, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
+import { canvasExport, canvasRecapSync, canvasRecapSyncB, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -19,6 +19,14 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcRes")?.addEventListener("change", rcApplyLayout);
   $("rcFit")?.addEventListener("change", rcApplyLayout);
+  const smEl = $("rcSyncMethod");
+  if (smEl) {
+    smEl.value = getSyncMethod();
+    smEl.addEventListener("change", () => {
+      const m = setSyncMethod(smEl.value);
+      log("rc", m === "B" ? "🧪 Sync method: B (Audio Master Timeline — စမ်းသပ်ဆဲ)" : "Sync method: A (Current Sync)", "ok");
+    });
+  }
   // Video pause warning (Chrome background tab)
   window.__novaOnVideoPause = () => {
     // No alert() here: this fires DURING canvas recording, and a blocking
@@ -1395,6 +1403,7 @@ function collectPresetSettings() {
     style_: ($("rcStyle") || {}).value || "",
     lang: ($("rcLang") || {}).value || "",
     flip: ($("rcFlip") || {}).checked || false,
+    syncMethod: getSyncMethod(),
   };
 }
 
@@ -1418,6 +1427,7 @@ async function applyPresetSettings(settings) {
   set("rcStyle", settings.style_);
   set("rcLang", settings.lang);
   setChk("rcFlip", settings.flip);
+  if (settings.syncMethod !== undefined && settings.syncMethod !== null) setSyncMethod(settings.syncMethod);
   // Logo position
   if (settings.logoPos) {
     rcLogoPos = { ...settings.logoPos };
@@ -1815,6 +1825,24 @@ async function checkStorageQuota() {
 }
 
 /** Get series info from UI */
+/** Sync method selection for the audio-first (canvas) recap path.
+ * "A" = current production sync (default). "B" = Audio Master Timeline
+ * (experimental). Persisted in localStorage; invalid/missing -> "A".
+ * Dubbing (canvasDubSync) and the mux fallback are unaffected. */
+const SYNC_METHOD_KEY = "nova_sync_method";
+function normalizeSyncMethod(v) { return v === "B" ? "B" : "A"; }
+function getSyncMethod() {
+  let v = null;
+  try { v = localStorage.getItem(SYNC_METHOD_KEY); } catch (_) {}
+  return normalizeSyncMethod(v);
+}
+function setSyncMethod(v) {
+  const m = normalizeSyncMethod(v);
+  try { localStorage.setItem(SYNC_METHOD_KEY, m); } catch (_) {}
+  const el = $("rcSyncMethod");
+  if (el) el.value = m;
+  return m;
+}
 function getSeriesInfo() {
   if (!($("rcSeriesOn") || {}).checked) return null;
   const title = (($("rcSeriesTitle") || {}).value || "").trim();
@@ -2003,7 +2031,9 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
+      const syncMethod = getSyncMethod();
+      if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
@@ -2640,7 +2670,9 @@ $("startRecap").addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasRecapSync(rcFile, segsWithAudio, {
+      const syncMethod = getSyncMethod();
+      if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+      let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
         flip: wantFlip,
         watermarkText: wantWm,
         blurRegions: rcBlurRegions,

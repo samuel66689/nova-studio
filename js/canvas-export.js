@@ -782,3 +782,358 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const ext = mimeType.includes("mp4") ? "mp4" : "webm";
   return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: totalDur, recSec: (performance.now() - _recT0) / 1000 };
 }
+
+// =====================================================================
+// METHOD B — Audio Master Timeline (EXPERIMENTAL)
+// ---------------------------------------------------------------------
+// Method A (canvasRecapSync above) is a sequential chain: each segment
+// starts only after the previous segment's seek + play + freeze finish,
+// so seek waits and loop overshoots accumulate into the recording and
+// the file drifts away from the output/SRT timeline.
+//
+// Method B instead anchors EVERYTHING to one master clock that starts
+// when the recorder starts:
+//   - The output timeline is built once from ACTUAL measured audio
+//     durations (buildMasterTimeline) — the same values the SRT uses.
+//   - Each segment's audio starts when master time reaches its
+//     outputStart (scheduled, not chained). Errors do not accumulate.
+//   - The first seek is paid BEFORE recording starts.
+//   - Later seeks are issued at segment boundaries without blocking the
+//     scheduler; a drift check re-locks the picture to the master clock.
+//   - Freeze tails, subtitles, blur and logo reuse drawScene/pickChunk,
+//     exactly like Method A.
+// Method A is untouched and remains the default.
+// =====================================================================
+
+/** Build the output timeline from measured audio durations (exact floats,
+ * no per-segment rounding, so boundaries cannot drift apart). */
+export function buildMasterTimeline(segData) {
+  let t = 0;
+  const items = [];
+  for (const s of segData) {
+    const d = (typeof s.audioDur === "number" && isFinite(s.audioDur) && s.audioDur > 0) ? s.audioDur : 0;
+    s.outputStart = t;
+    s.outputEnd = t + d;
+    t = s.outputEnd;
+    items.push(s);
+  }
+  return { items, total: t };
+}
+
+/** Which segment owns master time t? Boundaries belong to the NEXT segment.
+ * Zero-duration segments own no time and are skipped. -1 when t is outside. */
+export function masterSegmentAt(items, t) {
+  if (typeof t !== "number" || !isFinite(t) || t < 0) return -1;
+  for (let i = 0; i < items.length; i++) {
+    if (t >= items[i].outputStart && t < items[i].outputEnd) return i;
+  }
+  return -1;
+}
+
+/** Validate/clamp a segment's source window against the real video duration.
+ * Returns {start, end} or null when there is no usable source window
+ * (missing/NaN timestamps, empty or out-of-range window). */
+export function clampSourceWindow(seg, videoDur) {
+  if (!seg || typeof seg.sourceStart !== "number" || !isFinite(seg.sourceStart)) return null;
+  const vd = (typeof videoDur === "number" && isFinite(videoDur) && videoDur > 0) ? videoDur : 0;
+  let start = Math.max(0, seg.sourceStart);
+  if (vd > 0) {
+    if (start >= vd) return null; // scene starts at/after the end of the footage
+    start = Math.min(start, Math.max(vd - 0.05, 0));
+  }
+  let end = (typeof seg.sourceEnd === "number" && isFinite(seg.sourceEnd)) ? seg.sourceEnd : vd;
+  if (vd > 0) end = Math.min(end, vd);
+  if (!(end > start)) return null;
+  return { start, end };
+}
+
+// ---- Method B safety guards: fail safe, never silently corrupt ----
+// Detection does NOT rely on timers running in a background tab (they may
+// not): the visibility event rejects the export the moment the tab hides,
+// and a per-tick wall-clock gap check catches stalls that fire no event.
+export const SYNC_B_STALL_LIMIT_MS = 1500;
+export const SYNC_B_LATE_AUDIO_SEC = 0.35;
+export const SYNC_B_MAX_RESYNC = 4;
+
+/** True when the scheduler was stalled (hidden tab / app switch / freeze).
+ * Normal rAF gaps are ~16-100ms even on a busy phone; beyond the limit,
+ * boundaries were missed and the recording cannot be trusted. */
+export function stallDetected(lastTickAt, nowMs, limitMs = SYNC_B_STALL_LIMIT_MS) {
+  if (!lastTickAt || typeof nowMs !== "number" || !isFinite(nowMs)) return false;
+  return (nowMs - lastTickAt) > limitMs;
+}
+
+/** Where a segment's audio starts when its boundary is processed late.
+ * <= threshold is rAF jitter -> start at 0. Real lateness starts at the
+ * matching timeline position so narration/subtitles stay aligned with
+ * the window; the tail is cut at the next boundary, never spilled over. */
+export function audioStartOffset(local) {
+  if (typeof local !== "number" || !isFinite(local) || local <= SYNC_B_LATE_AUDIO_SEC) return 0;
+  return local;
+}
+
+/** Per-segment forced-resync budget. The 0.35s drift threshold is kept:
+ * lower would seek constantly (a phone seek costs ~100-300ms and can
+ * create the drift it tries to fix); higher would leave the picture
+ * visibly off the narration position. The budget catches seek storms —
+ * more resyncs than this in one segment means the decoder cannot keep
+ * up, and Method B aborts with a clear error instead of degrading. */
+export function resyncAllowed(alreadyUsed, max = SYNC_B_MAX_RESYNC) {
+  return (alreadyUsed || 0) < max;
+}
+
+function seekWithTimeoutB(video, target, ms) {
+  return new Promise((res) => {
+    let done = false;
+    let to = null;
+    const cleanup = () => { video.removeEventListener("seeked", onSeeked); if (to) clearTimeout(to); };
+    const finish = () => { if (!done) { done = true; cleanup(); res(); } };
+    const onSeeked = () => finish();
+    video.addEventListener("seeked", onSeeked);
+    to = setTimeout(finish, ms);
+    try { video.currentTime = target; } catch (_) { finish(); }
+  });
+}
+
+export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
+  const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
+    subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
+    shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
+    logoImg = null, logoPos = null, logoShape = "square" } = opts;
+  try {
+    await document.fonts.load(`bold ${subSize}px "${subFont}"`);
+    await document.fonts.ready;
+  } catch (_) {}
+
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+  document.body.appendChild(video);
+
+  // Load the source video — ONE automatic retry with a fresh object URL.
+  // A transient load failure (e.g. memory pressure right after TTS) must
+  // not kill the whole run the way it could in the sequential pipeline.
+  let url = URL.createObjectURL(videoBlob);
+  const loadOnce = () => new Promise((res, rej) => {
+    const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
+    video.onloadedmetadata = () => { clearTimeout(to); res(); };
+    video.onerror = () => {
+      clearTimeout(to);
+      const ec = video.error ? video.error.code : "?";
+      rej(new Error(`video ဖတ်မရပါ (code=${ec}) — browser ဒီ format ကို decode မရပါ`));
+    };
+    video.src = url;
+    try { video.load(); } catch (_) {}
+  });
+  try {
+    await loadOnce();
+  } catch (e1) {
+    try { console.warn("[sync-b] video load failed once, retrying:", e1.message); } catch (_) {}
+    await new Promise((r) => setTimeout(r, 600));
+    URL.revokeObjectURL(url);
+    url = URL.createObjectURL(videoBlob);
+    await loadOnce(); // second failure -> throw to caller (no silent fallback)
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const _fit = (typeof opts !== "undefined" && opts.fit) || "cover";
+  const scale = _fit === "contain" ? Math.min(width / vw, height / vh) : Math.max(width / vw, height / vh);
+  const dw = vw * scale, dh = vh * scale;
+
+  const S = { video, dw, dh, fit: _fit || "cover", flip, blur: blurRegions, wm: watermarkText,
+    t: 0, text: "",
+    sub: { on: subOn, color: subColor, size: subSize, font: subFont,
+           shadeColor, thickness: shadeThick, pos: subPos },
+    logo: { img: logoImg, pos: logoPos, shape: logoShape } };
+
+  // Prepare audio elements with measured durations (same as Method A)
+  const segData = [];
+  for (const s of segments) {
+    const aurl = URL.createObjectURL(s.audioBlob);
+    const a = new Audio(aurl);
+    const d = await new Promise((res) => {
+      a.onloadedmetadata = () => res(a.duration || 0);
+      a.onerror = () => res(0);
+    });
+    segData.push({ ...s, audioEl: a, audioDur: d, audioUrl: aurl });
+  }
+
+  // Authoritative timeline from ACTUAL audio durations
+  const tl = buildMasterTimeline(segData);
+  const total = tl.total;
+  if (!(total > 0)) {
+    for (const s of segData) URL.revokeObjectURL(s.audioUrl);
+    try { video.remove(); } catch (_) {}
+    URL.revokeObjectURL(url);
+    throw new Error("Method B: audio timeline is empty (အသံ duration မရပါ)");
+  }
+  try { console.log(`[sync-b] ${segData.length} segments, master timeline ${total.toFixed(1)}s`); } catch (_) {}
+
+  // Pay the FIRST seek before the recorder starts, so its cost is not recorded
+  const firstWin = clampSourceWindow(segData[0], video.duration || 0);
+  if (firstWin && Math.abs(video.currentTime - firstWin.start) >= 0.3) {
+    await seekWithTimeoutB(video, firstWin.start, 3000);
+  }
+
+  // Recording setup (same shape as Method A)
+  const stream = canvas.captureStream(30);
+  const actx = new AudioContext();
+  const dest = actx.createMediaStreamDestination();
+  for (const s of segData) {
+    const src = actx.createMediaElementSource(s.audioEl);
+    src.connect(dest);
+  }
+  const atrack = dest.stream.getAudioTracks()[0];
+  if (atrack) stream.addTrack(atrack);
+
+  const mimeTypes = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  let mimeType = "";
+  for (const mt of mimeTypes) { if (MediaRecorder.isTypeSupported(mt)) { mimeType = mt; break; } }
+  if (!mimeType) throw new Error("MediaRecorder မရပါ");
+
+  const chunks = [];
+  const rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: opts.bitrate || 4_000_000 });
+  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  const recDone = new Promise((res) => { rec.onstop = res; });
+  let recErr = null;
+  rec.onerror = (e) => { recErr = (e && e.error) || new Error("recorder error"); };
+
+  const _recT0 = performance.now();
+  rec.start(1000);
+  const T0 = performance.now();
+
+  let cur = -1;
+  let frozen = false;
+  let lastResync = 0;
+  let lastTickAt = 0;
+
+  // Fail-safe suspension handling (see guards above): hidden tab rejects
+  // immediately via the visibility event; a stall without an event is
+  // caught by the per-tick gap check. Either way the export FAILS with a
+  // clear error — Method B never returns a silently corrupted recording.
+  let rejectScheduler = null;
+  const stallError = () => new Error("Sync Method B: browser ရပ်သွားလို့ export ရပ်လိုက်ပါတယ် (tab ဖျောက် / app ပြောင်း / screen ပိတ်) — အသံ ကျော်သွားနိုင်လို့ file မထုတ်ပေးပါဘူး။ Tab ကို ဖွင့်ထားပြီး ပြန်စမ်းပါ၊ ဒါမှမဟုတ် Method A သုံးပါ");
+  const onVisChange = () => {
+    if (document.hidden && rejectScheduler) rejectScheduler(stallError());
+  };
+  document.addEventListener("visibilitychange", onVisChange);
+
+  try {
+  await new Promise((resolve, reject) => {
+    rejectScheduler = reject;
+    const tick = () => {
+      if (recErr) { reject(recErr); return; }
+      const nowMs = performance.now();
+      if (stallDetected(lastTickAt, nowMs)) { reject(stallError()); return; }
+      lastTickAt = nowMs;
+      const master = (nowMs - T0) / 1000;
+      if (master >= total) {
+        // Grace: let the final segment's audio finish (max +2s), like Method A
+        const last = segData[segData.length - 1];
+        const lastPlaying = last && last.audioEl && !last.audioEl.ended && !last.audioEl.paused;
+        if (lastPlaying && master < total + 2) { requestAnimationFrame(tick); return; }
+        resolve(); return;
+      }
+      const idx = masterSegmentAt(tl.items, master);
+      if (idx < 0) { resolve(); return; }
+      const s = segData[idx];
+      const local = master - s.outputStart;
+      const segDur = s.outputEnd - s.outputStart;
+
+      if (idx !== cur) {
+        // Segment boundary — reached by the MASTER CLOCK, not by the
+        // previous segment finishing. Stop any overrun audio (no overlap).
+        if (cur >= 0) {
+          const prev = segData[cur];
+          if (prev && prev.audioEl && !prev.audioEl.ended && !prev.audioEl.paused) {
+            try { prev.audioEl.pause(); } catch (_) {}
+          }
+        }
+        cur = idx; frozen = false;
+        s._resyncs = 0;
+        s._win = clampSourceWindow(s, video.duration || 0);
+        // Late boundary: start the audio at the matching timeline
+        // position instead of restarting it from zero.
+        try { s.audioEl.currentTime = audioStartOffset(local); } catch (_) {}
+        s.audioEl.play().catch(() => {});
+        if (s._win) {
+          if (Math.abs(video.currentTime - s._win.start) >= 0.3) {
+            try { video.currentTime = s._win.start; } catch (_) {}
+          }
+          video.play().catch(() => {});
+        } else if (video.paused && !video.ended) {
+          video.play().catch(() => {});
+        }
+        if (onprog) { try { onprog(master / total, idx, segData.length); } catch (_) {} }
+      }
+
+      const win = s._win;
+      if (win) {
+        const clipLen = win.end - win.start;
+        if (local <= clipLen) {
+          if (frozen) { frozen = false; video.play().catch(() => {}); }
+          // Drift lock: keep the picture on the master clock, not on
+          // accumulated playback. Bounded so a slow decoder cannot thrash.
+          if (!video.seeking && !video.paused) {
+            const expected = win.start + local;
+            if (Math.abs(video.currentTime - expected) > 0.35 && nowMs - lastResync > 250) {
+              if (!resyncAllowed(s._resyncs)) {
+                reject(new Error("Sync Method B: video decode က အချိန်ကို မလိုက်နိုင်လို့ ရပ်လိုက်ပါတယ် (seek အကြိမ်များလွန်း) — Method A နဲ့ ပြန်စမ်းပါ"));
+                return;
+              }
+              s._resyncs = (s._resyncs || 0) + 1;
+              lastResync = nowMs;
+              try { video.currentTime = expected; } catch (_) {}
+            }
+          }
+          S.t = video.currentTime; S.text = pickChunk(s.text, local, segDur);
+          drawScene(ctx, width, height, S);
+        } else {
+          // Freeze tail: hold last frame with the same slow zoom as Method A
+          if (!frozen) { frozen = true; try { video.pause(); } catch (_) {} }
+          const zp = Math.min((local - clipLen) / Math.max(segDur - clipLen, 0.1), 1);
+          S.t = video.currentTime; S.text = pickChunk(s.text, local, segDur);
+          drawScene(ctx, width, height, S, 1 + 0.12 * zp);
+        }
+      } else {
+        // No source window (frames/text modes): continuous playback
+        if (video.paused && !video.ended) video.play().catch(() => {});
+        S.t = video.currentTime; S.text = pickChunk(s.text, local, segDur);
+        drawScene(ctx, width, height, S);
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+  } catch (e) {
+    // Abort path: discard the partial recording, clean up, report failure.
+    try { video.pause(); } catch (_) {}
+    for (const s of segData) { if (s.audioEl && !s.audioEl.paused) { try { s.audioEl.pause(); } catch (_) {} } }
+    try { rec.stop(); } catch (_) {}
+    URL.revokeObjectURL(url);
+    for (const s of segData) URL.revokeObjectURL(s.audioUrl);
+    try { video.remove(); } catch (_) {}
+    try { await actx.close(); } catch (_) {}
+    document.removeEventListener("visibilitychange", onVisChange);
+    throw e;
+  }
+  document.removeEventListener("visibilitychange", onVisChange);
+
+  try { video.pause(); } catch (_) {}
+  for (const s of segData) { if (s.audioEl && !s.audioEl.paused) { try { s.audioEl.pause(); } catch (_) {} } }
+  rec.stop();
+  await recDone;
+  URL.revokeObjectURL(url);
+  for (const s of segData) URL.revokeObjectURL(s.audioUrl);
+  try { video.remove(); } catch (_) {}
+  try { await actx.close(); } catch (_) {}
+
+  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+  return { blob: new Blob(chunks, { type: mimeType.split(";")[0] }), ext, duration: total, recSec: (performance.now() - _recT0) / 1000 };
+}
