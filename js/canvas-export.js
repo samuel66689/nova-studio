@@ -847,6 +847,41 @@ export function clampSourceWindow(seg, videoDur) {
   return { start, end };
 }
 
+// ---- Method B safety guards: fail safe, never silently corrupt ----
+// Detection does NOT rely on timers running in a background tab (they may
+// not): the visibility event rejects the export the moment the tab hides,
+// and a per-tick wall-clock gap check catches stalls that fire no event.
+export const SYNC_B_STALL_LIMIT_MS = 1500;
+export const SYNC_B_LATE_AUDIO_SEC = 0.35;
+export const SYNC_B_MAX_RESYNC = 4;
+
+/** True when the scheduler was stalled (hidden tab / app switch / freeze).
+ * Normal rAF gaps are ~16-100ms even on a busy phone; beyond the limit,
+ * boundaries were missed and the recording cannot be trusted. */
+export function stallDetected(lastTickAt, nowMs, limitMs = SYNC_B_STALL_LIMIT_MS) {
+  if (!lastTickAt || typeof nowMs !== "number" || !isFinite(nowMs)) return false;
+  return (nowMs - lastTickAt) > limitMs;
+}
+
+/** Where a segment's audio starts when its boundary is processed late.
+ * <= threshold is rAF jitter -> start at 0. Real lateness starts at the
+ * matching timeline position so narration/subtitles stay aligned with
+ * the window; the tail is cut at the next boundary, never spilled over. */
+export function audioStartOffset(local) {
+  if (typeof local !== "number" || !isFinite(local) || local <= SYNC_B_LATE_AUDIO_SEC) return 0;
+  return local;
+}
+
+/** Per-segment forced-resync budget. The 0.35s drift threshold is kept:
+ * lower would seek constantly (a phone seek costs ~100-300ms and can
+ * create the drift it tries to fix); higher would leave the picture
+ * visibly off the narration position. The budget catches seek storms —
+ * more resyncs than this in one segment means the decoder cannot keep
+ * up, and Method B aborts with a clear error instead of degrading. */
+export function resyncAllowed(alreadyUsed, max = SYNC_B_MAX_RESYNC) {
+  return (alreadyUsed || 0) < max;
+}
+
 function seekWithTimeoutB(video, target, ms) {
   return new Promise((res) => {
     let done = false;
@@ -976,11 +1011,28 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
   let cur = -1;
   let frozen = false;
   let lastResync = 0;
+  let lastTickAt = 0;
 
+  // Fail-safe suspension handling (see guards above): hidden tab rejects
+  // immediately via the visibility event; a stall without an event is
+  // caught by the per-tick gap check. Either way the export FAILS with a
+  // clear error — Method B never returns a silently corrupted recording.
+  let rejectScheduler = null;
+  const stallError = () => new Error("Sync Method B: browser ရပ်သွားလို့ export ရပ်လိုက်ပါတယ် (tab ဖျောက် / app ပြောင်း / screen ပိတ်) — အသံ ကျော်သွားနိုင်လို့ file မထုတ်ပေးပါဘူး။ Tab ကို ဖွင့်ထားပြီး ပြန်စမ်းပါ၊ ဒါမှမဟုတ် Method A သုံးပါ");
+  const onVisChange = () => {
+    if (document.hidden && rejectScheduler) rejectScheduler(stallError());
+  };
+  document.addEventListener("visibilitychange", onVisChange);
+
+  try {
   await new Promise((resolve, reject) => {
+    rejectScheduler = reject;
     const tick = () => {
       if (recErr) { reject(recErr); return; }
-      const master = (performance.now() - T0) / 1000;
+      const nowMs = performance.now();
+      if (stallDetected(lastTickAt, nowMs)) { reject(stallError()); return; }
+      lastTickAt = nowMs;
+      const master = (nowMs - T0) / 1000;
       if (master >= total) {
         // Grace: let the final segment's audio finish (max +2s), like Method A
         const last = segData[segData.length - 1];
@@ -1004,8 +1056,11 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
           }
         }
         cur = idx; frozen = false;
+        s._resyncs = 0;
         s._win = clampSourceWindow(s, video.duration || 0);
-        try { s.audioEl.currentTime = 0; } catch (_) {}
+        // Late boundary: start the audio at the matching timeline
+        // position instead of restarting it from zero.
+        try { s.audioEl.currentTime = audioStartOffset(local); } catch (_) {}
         s.audioEl.play().catch(() => {});
         if (s._win) {
           if (Math.abs(video.currentTime - s._win.start) >= 0.3) {
@@ -1027,8 +1082,12 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
           // accumulated playback. Bounded so a slow decoder cannot thrash.
           if (!video.seeking && !video.paused) {
             const expected = win.start + local;
-            const nowMs = performance.now();
             if (Math.abs(video.currentTime - expected) > 0.35 && nowMs - lastResync > 250) {
+              if (!resyncAllowed(s._resyncs)) {
+                reject(new Error("Sync Method B: video decode က အချိန်ကို မလိုက်နိုင်လို့ ရပ်လိုက်ပါတယ် (seek အကြိမ်များလွန်း) — Method A နဲ့ ပြန်စမ်းပါ"));
+                return;
+              }
+              s._resyncs = (s._resyncs || 0) + 1;
               lastResync = nowMs;
               try { video.currentTime = expected; } catch (_) {}
             }
@@ -1052,6 +1111,19 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
     };
     tick();
   });
+  } catch (e) {
+    // Abort path: discard the partial recording, clean up, report failure.
+    try { video.pause(); } catch (_) {}
+    for (const s of segData) { if (s.audioEl && !s.audioEl.paused) { try { s.audioEl.pause(); } catch (_) {} } }
+    try { rec.stop(); } catch (_) {}
+    URL.revokeObjectURL(url);
+    for (const s of segData) URL.revokeObjectURL(s.audioUrl);
+    try { video.remove(); } catch (_) {}
+    try { await actx.close(); } catch (_) {}
+    document.removeEventListener("visibilitychange", onVisChange);
+    throw e;
+  }
+  document.removeEventListener("visibilitychange", onVisChange);
 
   try { video.pause(); } catch (_) {}
   for (const s of segData) { if (s.audioEl && !s.audioEl.paused) { try { s.audioEl.pause(); } catch (_) {} } }
