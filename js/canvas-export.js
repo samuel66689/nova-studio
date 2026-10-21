@@ -882,6 +882,51 @@ export function resyncAllowed(alreadyUsed, max = SYNC_B_MAX_RESYNC) {
   return (alreadyUsed || 0) < max;
 }
 
+export const SYNC_B_SETTLE_MS = 300;
+export const SYNC_B_AIM_CAP_SEC = 1.0;
+export const SYNC_B_SEEK_WATCHDOG_MS = 3000;
+
+/** Signed sync error: expected - currentTime.
+ * > 0: video BEHIND (older scene than the narration position).
+ * < 0: video AHEAD (later scene). Verdicts use Math.abs — a video that
+ * is ahead is NOT treated as synchronized. */
+export function syncLag(expected, currentTime) {
+  if (typeof expected !== "number" || typeof currentTime !== "number" || !isFinite(expected) || !isFinite(currentTime)) return 0;
+  return expected - currentTime;
+}
+
+/** Aim-ahead seek target: the source position the video should occupy
+ * when the seek COMPLETES. expected advances at 1.0x during the seek,
+ * so targeting expected + (estimated seek latency) lands on the
+ * expected position at completion instead of behind it by the latency.
+ * The aim is capped at 1.0s and clamped to the window end. */
+export function aimAheadTarget(expected, latencySec, winEnd) {
+  const lat = (typeof latencySec === "number" && isFinite(latencySec)) ? latencySec : 0;
+  const aim = Math.min(Math.max(lat, 0), SYNC_B_AIM_CAP_SEC);
+  let t = expected + aim;
+  if (typeof winEnd === "number" && isFinite(winEnd)) t = Math.min(t, winEnd);
+  return t;
+}
+
+/** Correction verdict for a SETTLED tick.
+ * "correct": settled |lag| beyond 0.35s with budget left.
+ * "abort": settled |lag| beyond 0.35s with the budget exhausted — the
+ * export fails rather than shipping visibly wrong scene timing.
+ * "none": unsettled, or |lag| within tolerance. */
+export function correctionVerdict(absLag, settled, correctionsUsed, max = SYNC_B_MAX_RESYNC) {
+  if (!settled || !(absLag > 0.35)) return "none";
+  return (correctionsUsed || 0) < max ? "correct" : "abort";
+}
+
+/** Seeking watchdog: true when the element has been continuously
+ * seeking longer than the limit (decoder hang). Caller owns the timer:
+ * it starts on the first tick that observes seeking, resets on any
+ * tick that observes not-seeking; new seek requests do NOT reset it. */
+export function seekingWatchdogTripped(seekingSince, nowMs, limitMs = SYNC_B_SEEK_WATCHDOG_MS) {
+  if (seekingSince == null || typeof nowMs !== "number" || !isFinite(nowMs)) return false;
+  return (nowMs - seekingSince) > limitMs;
+}
+
 function seekWithTimeoutB(video, target, ms) {
   return new Promise((res) => {
     let done = false;
@@ -977,8 +1022,11 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
 
   // Pay the FIRST seek before the recorder starts, so its cost is not recorded
   const firstWin = clampSourceWindow(segData[0], video.duration || 0);
+  let latencyEst = 0;
   if (firstWin && Math.abs(video.currentTime - firstWin.start) >= 0.3) {
+    const _ps = performance.now();
     await seekWithTimeoutB(video, firstWin.start, 3000);
+    latencyEst = Math.min(Math.max((performance.now() - _ps) / 1000, 0), 1.5);
   }
 
   // Recording setup (same shape as Method A)
@@ -1010,8 +1058,24 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
 
   let cur = -1;
   let frozen = false;
-  let lastResync = 0;
   let lastTickAt = 0;
+  // Aim-ahead seek bookkeeping: completion is detected by the seeking
+  // true->false transition sampled in the tick, or inferred when the
+  // target is already showing without a transition (no-op/instant seek).
+  let prevSeeking = false;
+  let pendingSeek = false;
+  let sawSeeking = false;
+  let seekIssuedAt = 0;
+  let seekTargetPos = 0;
+  let lastSeekDoneAt = T0;
+  let seekingSince = null;
+  let baseLag = null;
+  let lastSampleAt = 0;
+  const issueSeek = (pos) => {
+    pendingSeek = true; sawSeeking = false;
+    seekIssuedAt = performance.now(); seekTargetPos = pos;
+    try { video.currentTime = pos; } catch (_) {}
+  };
 
   // Fail-safe suspension handling (see guards above): hidden tab rejects
   // immediately via the visibility event; a stall without an event is
@@ -1032,6 +1096,31 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
       const nowMs = performance.now();
       if (stallDetected(lastTickAt, nowMs)) { reject(stallError()); return; }
       lastTickAt = nowMs;
+      // Seeking watchdog: continuous seeking beyond the limit is a
+      // decoder hang — abort instead of waiting forever.
+      if (video.seeking) { if (seekingSince == null) seekingSince = nowMs; }
+      else seekingSince = null;
+      if (seekingWatchdogTripped(seekingSince, nowMs)) {
+        reject(new Error("Sync Method B: video seek က ရပ်တန့်နေလို့ (decoder hang) ရပ်လိုက်ပါတယ် — Method A နဲ့ ပြန်စမ်းပါ"));
+        return;
+      }
+      // Seek completion bookkeeping (updates the latency estimate).
+      if (pendingSeek) {
+        if (video.seeking) sawSeeking = true;
+        const doneByTransition = prevSeeking && !video.seeking;
+        const doneByArrival = !video.seeking && Math.abs(video.currentTime - seekTargetPos) <= 0.05;
+        if (doneByTransition || doneByArrival) {
+          const measured = (nowMs - seekIssuedAt) / 1000;
+          if (sawSeeking && measured > 0 && measured < 10) {
+            latencyEst = Math.min(Math.max(measured, 0), 1.5);
+          }
+          pendingSeek = false;
+          lastSeekDoneAt = nowMs;
+          baseLag = null;
+          try { console.log(`[sync-b-land] latency=${Math.round(measured * 1000)}ms est=${latencyEst.toFixed(2)}s`); } catch (_) {}
+        }
+      }
+      prevSeeking = video.seeking;
       const master = (nowMs - T0) / 1000;
       if (master >= total) {
         // Grace: let the final segment's audio finish (max +2s), like Method A
@@ -1056,16 +1145,15 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
           }
         }
         cur = idx; frozen = false;
-        s._resyncs = 0;
+        s._corr = 0;
+        baseLag = null;
         s._win = clampSourceWindow(s, video.duration || 0);
         // Late boundary: start the audio at the matching timeline
         // position instead of restarting it from zero.
         try { s.audioEl.currentTime = audioStartOffset(local); } catch (_) {}
         s.audioEl.play().catch(() => {});
         if (s._win) {
-          if (Math.abs(video.currentTime - s._win.start) >= 0.3) {
-            try { video.currentTime = s._win.start; } catch (_) {}
-          }
+          if (Math.abs(video.currentTime - s._win.start) >= 0.3) issueSeek(s._win.start);
           video.play().catch(() => {});
         } else if (video.paused && !video.ended) {
           video.play().catch(() => {});
@@ -1078,18 +1166,40 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
         const clipLen = win.end - win.start;
         if (local <= clipLen) {
           if (frozen) { frozen = false; video.play().catch(() => {}); }
-          // Drift lock: keep the picture on the master clock, not on
-          // accumulated playback. Bounded so a slow decoder cannot thrash.
+          // Aim-ahead drift correction. Verdicts are made only on
+          // SETTLED ticks (seek completed + 300ms), always against the
+          // expected position at THIS tick — never at request time.
+          // |lag| is used: an ahead video is not synchronized either.
           if (!video.seeking && !video.paused) {
             const expected = win.start + local;
-            if (Math.abs(video.currentTime - expected) > 0.35 && nowMs - lastResync > 250) {
-              if (!resyncAllowed(s._resyncs)) {
-                reject(new Error("Sync Method B: video decode က အချိန်ကို မလိုက်နိုင်လို့ ရပ်လိုက်ပါတယ် (seek အကြိမ်များလွန်း) — Method A နဲ့ ပြန်စမ်းပါ"));
+            const lag = syncLag(expected, video.currentTime);
+            const settled = !pendingSeek && (nowMs - lastSeekDoneAt) >= SYNC_B_SETTLE_MS;
+            if (settled) {
+              if (baseLag == null) {
+                baseLag = lag;
+                try { console.log(`[sync-b-land] idx=${idx} landingLag=${lag.toFixed(2)}s`); } catch (_) {}
+              }
+              const growth = lag - baseLag;
+              if (Math.abs(lag) > 0.2 && nowMs - lastSampleAt >= 500) {
+                lastSampleAt = nowMs;
+                try { console.log(`[sync-b-sample] idx=${idx} master=${master.toFixed(2)} lag=${lag.toFixed(2)} growth=${growth.toFixed(2)}`); } catch (_) {}
+              }
+              const verdict = correctionVerdict(Math.abs(lag), settled, s._corr);
+              if (verdict === "abort") {
+                reject(new Error(growth > 0.15
+                  ? "Sync Method B: video decode က အချိန်ကို မလိုက်နိုင်လို့ ရပ်လိုက်ပါတယ် (seek အကြိမ်များလွန်း) — Method A နဲ့ ပြန်စမ်းပါ"
+                  : "Sync Method B: seek latency မြင့်/မတည်ငြိမ်လွန်းလို့ scene timing မမှန်နိုင်ပါ — Method A နဲ့ ပြန်စမ်းပါ"));
                 return;
               }
-              s._resyncs = (s._resyncs || 0) + 1;
-              lastResync = nowMs;
-              try { video.currentTime = expected; } catch (_) {}
+              // Boundary guard: correct only when the seek can land
+              // AND settle inside this segment; otherwise the next
+              // boundary re-anchors anyway.
+              if (verdict === "correct" && (segDur - local) > latencyEst + SYNC_B_SETTLE_MS / 1000) {
+                s._corr = (s._corr || 0) + 1;
+                const target = aimAheadTarget(expected, latencyEst, win.end);
+                try { console.log(`[sync-b-resync] idx=${idx} lag=${lag.toFixed(2)} growth=${growth.toFixed(2)} count=${s._corr} target=${target.toFixed(2)}`); } catch (_) {}
+                issueSeek(target);
+              }
             }
           }
           S.t = video.currentTime; S.text = pickChunk(s.text, local, segDur);
