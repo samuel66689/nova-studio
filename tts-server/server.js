@@ -6,15 +6,16 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261023-cors1"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261023-cors2"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
-// CORS: echo the request Origin only when it is one of our own sites
-// (production + the isolated Sync-B preview). Any other origin gets the
-// production default, which browsers will block for foreign origins.
+// CORS: echo the request Origin only when it is one of our own sites.
+// Any other origin gets the production default, which browsers will
+// block for foreign origins. (The Sync-B preview origin was allowed
+// temporarily on 2026-10-23 and removed the same day after the fix
+// merged to production.)
 const ALLOWED_ORIGINS = new Set([
   ORIGIN,
   "https://nova-studio-qfco.onrender.com",
-  "https://nova-studio-syncb-preview.onrender.com",
 ]);
 function corsOriginFor(req) {
   const o = req && req.headers && req.headers.origin;
