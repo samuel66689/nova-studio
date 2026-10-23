@@ -87,8 +87,8 @@ export async function ensureFFmpeg(log) {
   for (const kind of kinds) {
     for (const s of coreSources(kind)) {
       const inst = new FFmpeg();
-      inst.on("progress", ({ progress }) => {
-        if (progressCb) { try { progressCb(progress); } catch (_) {} }
+      inst.on("progress", ({ progress, time }) => {
+        if (progressCb) { try { progressCb(progress, time); } catch (_) {} }
       });
       try {
         const tag = kind === "mt" ? "multi-thread" : "single-thread";
