@@ -6,7 +6,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261023-cors2"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261023-cors3"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 // CORS: echo the request Origin only when it is one of our own sites.
 // Any other origin gets the production default, which browsers will
@@ -16,6 +16,7 @@ const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.
 const ALLOWED_ORIGINS = new Set([
   ORIGIN,
   "https://nova-studio-qfco.onrender.com",
+  "https://nova-studio-dubrecap-preview.onrender.com",
 ]);
 function corsOriginFor(req) {
   const o = req && req.headers && req.headers.origin;
