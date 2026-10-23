@@ -87,6 +87,16 @@ export function dubRecapProgressRatio(timeUs, totalOutSec) {
   return Math.min(Math.max((timeUs / 1e6) / totalOutSec, 0), 1);
 }
 
+/** Parse ffmpeg's own stats line ("... time=00:01:23.45 ...") -> seconds.
+ *  This is the one progress signal that stays truthful in ffmpeg.wasm:
+ *  both the progress-event ratio AND its time field proved unreliable
+ *  with a concat-demuxer input (ratio exploded; time saturated at once). */
+export function parseFfmpegStatsTime(line) {
+  const m = /time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(String(line || ""));
+  if (!m) return null;
+  return (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
+}
+
 /** "#rrggbb" -> "0xrrggbb" for drawtext colors. */
 export function hexToFfmpegColor(c, fallback = "0xffffff") {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(String(c || "").trim());
@@ -367,20 +377,27 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
     if (onprog) onprog(0.1);
     const totalOutSec = totalPre / DUB_RECAP_SPEEDUP;
     let lastProcSec = 0;
-    setProgressHandler((p, timeUs) => {
-      let r = (typeof timeUs === "number" && timeUs > 0)
-        ? dubRecapProgressRatio(timeUs, totalOutSec) : p;
-      if (!isFinite(r)) r = 0;
-      r = Math.min(Math.max(r, 0), 1);
-      lastProcSec = r * totalOutSec;
-      if (onprog) { try { onprog(0.1 + r * 0.85); } catch (_) {} }
-    });
+    const onStats = ({ message }) => {
+      const t = parseFfmpegStatsTime(message);
+      if (t !== null && t >= lastProcSec) {
+        lastProcSec = t;
+        if (onprog) {
+          const r = Math.min(Math.max(t / totalOutSec, 0), 1);
+          try { onprog(0.1 + r * 0.85); } catch (_) {}
+        }
+      }
+    };
+    try { ff.on("log", onStats); } catch (_) {}
+    setProgressHandler(null); // progress-event numbers are unreliable here
     const t0 = Date.now();
     const hb = setInterval(() => {
-      say(`⏳ render လုပ်နေဆဲပါ… ${Math.round((Date.now() - t0) / 1000)}s ကြာပြီ (video ${lastProcSec.toFixed(0)}s / ~${totalOutSec.toFixed(0)}s ပြီး)`);
+      say(`⏳ render လုပ်နေဆဲပါ… ${Math.round((Date.now() - t0) / 1000)}s ကြာပြီ (video ~${lastProcSec.toFixed(0)}s / ~${totalOutSec.toFixed(0)}s)`);
     }, 20000);
     let code;
-    try { code = await ff.exec(args); } finally { clearInterval(hb); }
+    try { code = await ff.exec(args); } finally {
+      clearInterval(hb);
+      try { ff.off("log", onStats); } catch (_) {}
+    }
     setProgressHandler(null);
     if (code !== 0) throw new Error("Dub recap render: FFmpeg render မအောင်မြင်ပါ (code " + code + ")");
     try { await ff.deleteFile("dub_in.mp4"); } catch (_) {}
