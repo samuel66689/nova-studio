@@ -6,8 +6,20 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261018-diag2"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261023-cors1"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
+// CORS: echo the request Origin only when it is one of our own sites
+// (production + the isolated Sync-B preview). Any other origin gets the
+// production default, which browsers will block for foreign origins.
+const ALLOWED_ORIGINS = new Set([
+  ORIGIN,
+  "https://nova-studio-qfco.onrender.com",
+  "https://nova-studio-syncb-preview.onrender.com",
+]);
+function corsOriginFor(req) {
+  const o = req && req.headers && req.headers.origin;
+  return o && ALLOWED_ORIGINS.has(o) ? o : ORIGIN;
+}
 const ALLOWED_VOICES = new Set(["my-MM-NilarNeural", "my-MM-ThihaNeural"]);
 // Gemini proxy: only these models, only generateContent on the official host
 const GEMINI_HOST = "generativelanguage.googleapis.com";
@@ -127,7 +139,8 @@ function synth(text, voice) {
 }
 
 const server = http.createServer(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", ORIGIN);
+  res.setHeader("Access-Control-Allow-Origin", corsOriginFor(req));
+  res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-gemini-key, x-file-name, x-mime-type");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
