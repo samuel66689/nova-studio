@@ -78,6 +78,15 @@ export function dubRecapTimeMapper(pieces) {
   };
 }
 
+/** Progress ratio from ffmpeg's processed time (µs) vs the known output
+ *  length. ffmpeg.wasm's own progress ratio explodes (billions of %) when
+ *  an input's duration is unreadable — e.g. the concat demuxer — so the
+ *  render progress is computed from processed time instead. */
+export function dubRecapProgressRatio(timeUs, totalOutSec) {
+  if (!(totalOutSec > 0) || !(timeUs > 0)) return 0;
+  return Math.min(Math.max((timeUs / 1e6) / totalOutSec, 0), 1);
+}
+
 /** "#rrggbb" -> "0xrrggbb" for drawtext colors. */
 export function hexToFfmpegColor(c, fallback = "0xffffff") {
   const m = /^#?([0-9a-fA-F]{6})$/.exec(String(c || "").trim());
@@ -356,8 +365,22 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
     say(`🎬 Dub recap render စပါပြီ — ${segs.length} ပိုင်း, မူရင်း ${total.toFixed(1)}s → ` +
         `${totalPre.toFixed(1)}s → 1.3× ပြီး ${(totalPre / DUB_RECAP_SPEEDUP).toFixed(1)}s`);
     if (onprog) onprog(0.1);
-    setProgressHandler((p) => { if (onprog) { try { onprog(0.1 + p * 0.85); } catch (_) {} } });
-    const code = await ff.exec(args);
+    const totalOutSec = totalPre / DUB_RECAP_SPEEDUP;
+    let lastProcSec = 0;
+    setProgressHandler((p, timeUs) => {
+      let r = (typeof timeUs === "number" && timeUs > 0)
+        ? dubRecapProgressRatio(timeUs, totalOutSec) : p;
+      if (!isFinite(r)) r = 0;
+      r = Math.min(Math.max(r, 0), 1);
+      lastProcSec = r * totalOutSec;
+      if (onprog) { try { onprog(0.1 + r * 0.85); } catch (_) {} }
+    });
+    const t0 = Date.now();
+    const hb = setInterval(() => {
+      say(`⏳ render လုပ်နေဆဲပါ… ${Math.round((Date.now() - t0) / 1000)}s ကြာပြီ (video ${lastProcSec.toFixed(0)}s / ~${totalOutSec.toFixed(0)}s ပြီး)`);
+    }, 20000);
+    let code;
+    try { code = await ff.exec(args); } finally { clearInterval(hb); }
     setProgressHandler(null);
     if (code !== 0) throw new Error("Dub recap render: FFmpeg render မအောင်မြင်ပါ (code " + code + ")");
     try { await ff.deleteFile("dub_in.mp4"); } catch (_) {}
