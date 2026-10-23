@@ -2216,6 +2216,103 @@ $("previewVoice").addEventListener("click", async () => {
   }
 });
 
+// ---- dubbing (wordbyword) translation: strict Burmese-only + repair ----
+// The old inline prompt had no foreign-script ban and silently fell back
+// to the SOURCE text whenever a batch failed or returned fewer lines —
+// that is how Thai/Korean/Chinese text flooded dubbing scripts. This
+// helper locks the language, demands an exact line count, redoes
+// mismatched batches line-by-line, then scans for foreign scripts and
+// re-translates offenders; anything still bad is reported loudly.
+const DUB_TRANSLATE_RULES = [
+  "You are translating drama dialogue into Burmese for voice dubbing.",
+  "Translate each numbered line into natural spoken Burmese (စကားပြော).",
+  "STRICT RULES:",
+  "- Output ONLY in Burmese (Myanmar) script. NEVER use Chinese, Thai, Korean, Japanese or Latin letters in a translation.",
+  "- People's names and place names: write them in Burmese script (transliterate the sound).",
+  "- Return EXACTLY one translation per input line, in the same order, one translation per line.",
+  "- No numbering, no explanations, no quotes, no blank lines.",
+  "- Keep each translation about as long as its original line (it must fit the same timing).",
+  "- Natural spoken meaning first; do not mirror the original word order; no formal written particles.",
+].join("\n");
+
+function foreignScriptOf(text) {
+  const t = String(text || "");
+  if (/[\u3040-\u30ff]/.test(t)) return "ဂျပန်";
+  if (/[\uac00-\ud7a3]/.test(t)) return "ကိုရီးယား";
+  if (/[\u4e00-\u9fff]/.test(t)) return "တရုတ်";
+  if (/[\u0e00-\u0e7f]/.test(t)) return "ထိုင်း";
+  if (/[A-Za-z]{4,}/.test(t)) return "အင်္ဂလိပ်";
+  return null;
+}
+
+async function translateDubSegments(allSegs, onprog, say) {
+  const BATCH = 10;
+  const out = new Array(allSegs.length).fill(null);
+  allSegs.forEach((s, i) => { if (!String(s.text || "").trim()) out[i] = s.text || ""; });
+  const askBatch = async (idxs) => {
+    const prompt = DUB_TRANSLATE_RULES + "\n\n" +
+      idxs.map((gi, j) => `${j + 1}. ${allSegs[gi].text}`).join("\n");
+    const res = await geminiText(prompt, 8000);
+    return String(res || "").trim().split("\n")
+      .map((l) => l.replace(/^\d+[.)]\s*/, "").trim());
+  };
+  const askOne = async (gi) => {
+    for (let a = 0; a < 2; a++) {
+      try {
+        const lines = await askBatch([gi]);
+        const t = (lines || []).join(" ").trim();
+        if (t) return t;
+      } catch (e) {}
+    }
+    return null;
+  };
+  for (let i = 0; i < allSegs.length; i += BATCH) {
+    const idxs = [];
+    for (let j = i; j < Math.min(i + BATCH, allSegs.length); j++) {
+      if (out[j] === null) idxs.push(j);
+    }
+    if (idxs.length) {
+      let lines = null;
+      try { lines = await askBatch(idxs); } catch (e) { lines = null; }
+      if (lines && lines.length === idxs.length) {
+        idxs.forEach((gi, j) => { out[gi] = lines[j]; });
+      } else {
+        // Count mismatch or batch failure: redo line-by-line so a short
+        // answer can never shift translations onto the wrong lines.
+        for (const gi of idxs) { const t = await askOne(gi); if (t) out[gi] = t; }
+      }
+    }
+    if (onprog) onprog(Math.min(i + BATCH, allSegs.length), allSegs.length);
+  }
+  const badIdx = () => {
+    const b = [];
+    out.forEach((t, gi) => {
+      if (!String(allSegs[gi].text || "").trim()) return;
+      if (!t || foreignScriptOf(t)) b.push(gi);
+    });
+    return b;
+  };
+  let bad = badIdx();
+  for (let round = 0; round < 2 && bad.length; round++) {
+    if (say) say(`⚠️ နိုင်ငံခြားစာ ပါ/ပျက်နေတဲ့ ကြောင်း ${bad.length} ကြောင်း ပြန်ပြန်နေပါတယ်… (အကြိမ် ${round + 1})`);
+    for (const gi of bad) {
+      const t = await askOne(gi);
+      if (t && !foreignScriptOf(t)) out[gi] = t;
+      else if (t && !out[gi]) out[gi] = t;
+    }
+    bad = badIdx();
+  }
+  if (bad.length && say) {
+    say(`❌ ကြောင်း ${bad.length} ကြောင်း ဘာသာပြန် မသန့်သေးပါ — TTS မစခင် စစ်ပါ: ` +
+      bad.slice(0, 15).map((gi) => `#${gi + 1}(${out[gi] ? (foreignScriptOf(out[gi]) || "?") : "မရ"})`).join(", ") +
+      (bad.length > 15 ? " …" : ""));
+  }
+  return allSegs.map((s, gi) => ({
+    start: s.start, end: s.end,
+    text: out[gi] !== null ? out[gi] : s.text,
+  }));
+}
+
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
@@ -2350,29 +2447,14 @@ $("startRecap").addEventListener("click", async () => {
       setStep("script", "done");
     }
     if (!segments && rcStyle === "wordbyword") {
-      // Word-by-word dubbing: translate transcript directly, keep original timing
+      // Word-by-word dubbing: translate transcript directly, keep original
+      // timing. Strict Burmese-only translation with foreign-script scan +
+      // auto re-translate lives in translateDubSegments (no silent fallback).
       setProgress("rc", 55, "စာသားတွေ မြန်မာလို ပြန်နေပါတယ်…");
       log("rc", "🎙️ Word-by-word dubbing — transcript ကို တိုက်ရိုက် ဘာသာပြန်နေပါတယ်…");
-      segments = [];
-      const BATCH = 10;
-      for (let i = 0; i < allSegs.length; i += BATCH) {
-        const batch = allSegs.slice(i, i + BATCH);
-        const prompt = "Translate each line to natural spoken Burmese (စကားပြော). " +
-          "Return ONLY the translations, one per line, in the same order. " +
-          "No numbering, no explanations.\n\n" +
-          batch.map((s, j) => `${j + 1}. ${s.text}`).join("\n");
-        try {
-          const out = await geminiText(prompt, 8000);
-          const lines = out.trim().split("\n").map((l) => l.replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean);
-          batch.forEach((s, j) => {
-            segments.push({ start: s.start, end: s.end, text: lines[j] || s.text });
-          });
-        } catch (e) {
-          // Fallback: use original text
-          batch.forEach((s) => segments.push({ start: s.start, end: s.end, text: s.text }));
-        }
-        setProgress("rc", 55 + (i / allSegs.length) * 10, `ဘာသာပြန်နေပါတယ်… (${Math.min(i + BATCH, allSegs.length)}/${allSegs.length})`);
-      }
+      segments = await translateDubSegments(allSegs,
+        (done, total) => setProgress("rc", 55 + (done / total) * 10, `ဘာသာပြန်နေပါတယ်… (${done}/${total})`),
+        (m) => log("rc", m));
       log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
       setStep("script", "done");
     }
