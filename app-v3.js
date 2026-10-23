@@ -2,6 +2,7 @@
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261021a";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
 import { canvasExport, canvasRecapSync, canvasRecapSyncB, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
+import { ffmpegDubRecap } from "./js/dub-recap-render.js?v=20261023a";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -25,6 +26,14 @@ document.addEventListener("DOMContentLoaded", () => {
     smEl.addEventListener("change", () => {
       const m = setSyncMethod(smEl.value);
       log("rc", m === "B" ? "🧪 Sync method: B (Audio Master Timeline — စမ်းသပ်ဆဲ)" : "Sync method: A (Current Sync)", "ok");
+    });
+  }
+  const drEl = $("rcDubRender");
+  if (drEl) {
+    drEl.value = getDubRender();
+    drEl.addEventListener("change", () => {
+      const m = setDubRender(drEl.value);
+      log("rc", m === "recap" ? "🎬 Dub render: Recap render (ffmpeg — video က အသံနောက် လိုက်, 1.3× အပါ)" : "Dub render: Canvas (ပုံမှန်)", "ok");
     });
   }
   // Video pause warning (Chrome background tab)
@@ -1831,6 +1840,20 @@ async function checkStorageQuota() {
  * Dubbing (canvasDubSync) and the mux fallback are unaffected. */
 const SYNC_METHOD_KEY = "nova_sync_method";
 function normalizeSyncMethod(v) { return v === "B" ? "B" : "A"; }
+const DUB_RENDER_KEY = "nova_dub_render";
+function normalizeDubRender(v) { return v === "recap" ? "recap" : "canvas"; }
+function getDubRender() {
+  let v = null;
+  try { v = localStorage.getItem(DUB_RENDER_KEY); } catch (_) {}
+  return normalizeDubRender(v);
+}
+function setDubRender(v) {
+  const m = normalizeDubRender(v);
+  try { localStorage.setItem(DUB_RENDER_KEY, m); } catch (_) {}
+  const el = $("rcDubRender");
+  if (el) el.value = m;
+  return m;
+}
 function getSyncMethod() {
   let v = null;
   try { v = localStorage.getItem(SYNC_METHOD_KEY); } catch (_) {}
@@ -1976,15 +1999,20 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
+      const useDubRecap = getDubRender() === "recap";
+      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
+      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+        onlog: (m) => log("rc", m),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+      // ffmpeg output already carries correct duration metadata; the
+      // MediaRecorder duration patch applies to the canvas path only.
+      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
       let srt = null;
-      try { srt = segmentsToSRT(segments); }
+      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
         srt = null; // Do NOT create file with error message
@@ -2611,15 +2639,20 @@ $("startRecap").addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
+      const useDubRecap = getDubRender() === "recap";
+      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
+      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+        onlog: (m) => log("rc", m),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+      // ffmpeg output already carries correct duration metadata; the
+      // MediaRecorder duration patch applies to the canvas path only.
+      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
       let srt = null;
-      try { srt = segmentsToSRT(segments); }
+      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
         srt = null; // Do NOT create file with error message
