@@ -13,7 +13,7 @@
 // SRT download matches the exported video — the source timeline would
 // be wrong for this render mode.
 
-import { ensureFFmpeg, fetchFile, setProgressHandler } from "./ffmpeg.js?v=20261021a";
+import { ensureFFmpeg, ffmpegMode, terminateFFmpeg, fetchFile, setProgressHandler } from "./ffmpeg.js?v=20261021a";
 import { mediaDuration } from "./api.js?v=20261021a";
 
 export const DUB_RECAP_SPEEDUP = 1.3;
@@ -95,6 +95,41 @@ export function parseFfmpegStatsTime(line) {
   const m = /time=(\d+):(\d{2}):(\d{2}(?:\.\d+)?)/.exec(String(line || ""));
   if (!m) return null;
   return (+m[1]) * 3600 + (+m[2]) * 60 + parseFloat(m[3]);
+}
+
+/** Stall threshold for the render watchdog: no stats-time increase for
+ *  this long means the encoder is stuck, not slow (desktop ST showed its
+ *  first stats line in ~3.4s, so 60s is generous even for a slow phone). */
+const DUB_RECAP_WATCHDOG_MS = 60000;
+
+/**
+ * Race an ff.exec promise against a stall watchdog. isStalled() is polled
+ * every checkMs; when it returns true the race resolves "watchdog" even
+ * though the exec promise is still pending. The caller then terminates
+ * the worker; the library rejects the abandoned exec, which is safely
+ * ignored here because this helper already attached a rejection handler.
+ * Returns {kind:"done",code} | {kind:"error",error} | {kind:"watchdog"}.
+ */
+export async function execWithWatchdog(execPromise, isStalled, checkMs = 5000) {
+  let timer = null;
+  const watchdogP = new Promise((resolve) => {
+    const check = () => {
+      if (isStalled()) resolve("watchdog");
+      else timer = setTimeout(check, checkMs);
+    };
+    timer = setTimeout(check, checkMs);
+  });
+  try {
+    return await Promise.race([
+      execPromise.then(
+        (code) => ({ kind: "done", code }),
+        (error) => ({ kind: "error", error })
+      ),
+      watchdogP.then(() => ({ kind: "watchdog" })),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** "#rrggbb" -> "0xrrggbb" for drawtext colors. */
@@ -240,6 +275,8 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
     width = 720, height = 1280, fit = "cover",
     onprog = null, onlog = null,
   } = opts;
+  const forceST = !!opts.__forceST;
+  const retried = !!opts.__retried;
   const say = (m) => { console.log("[dub-recap]", m); if (onlog) { try { onlog(m); } catch (_) {} } };
   const segsIn = (segments || []).filter((s) => s && s.audioBlob);
   if (!segsIn.length) throw new Error("Dub recap render: အသံပါတဲ့ segment မရှိပါ");
@@ -273,7 +310,7 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
   const cleanup = [];
   const reg = (n) => { cleanup.push(n); return n; };
   try {
-    ff = await ensureFFmpeg((m) => say(m));
+    ff = await ensureFFmpeg((m) => say(m), forceST ? { forceKind: "st" } : undefined);
     if (onprog) onprog(0.03);
     await ff.writeFile(reg("dub_in.mp4"), await fetchFile(videoFile));
     const fps = await probeFps(ff);
@@ -377,9 +414,11 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
     if (onprog) onprog(0.1);
     const totalOutSec = totalPre / DUB_RECAP_SPEEDUP;
     let lastProcSec = 0;
+    let lastStatsAt = 0;
     const onStats = ({ message }) => {
       const t = parseFfmpegStatsTime(message);
       if (t !== null && t >= lastProcSec) {
+        if (t > lastProcSec) lastStatsAt = Date.now();
         lastProcSec = t;
         if (onprog) {
           const r = Math.min(Math.max(t / totalOutSec, 0), 1);
@@ -390,15 +429,32 @@ export async function ffmpegDubRecap(videoFile, segments, opts = {}) {
     try { ff.on("log", onStats); } catch (_) {}
     setProgressHandler(null); // progress-event numbers are unreliable here
     const t0 = Date.now();
+    lastStatsAt = t0;
     const hb = setInterval(() => {
       say(`⏳ render လုပ်နေဆဲပါ… ${Math.round((Date.now() - t0) / 1000)}s ကြာပြီ (video ~${lastProcSec.toFixed(0)}s / ~${totalOutSec.toFixed(0)}s)`);
     }, 20000);
     let code;
-    try { code = await ff.exec(args); } finally {
+    let watchdog = false;
+    try {
+      const res = await execWithWatchdog(ff.exec(args), () => Date.now() - lastStatsAt >= DUB_RECAP_WATCHDOG_MS);
+      if (res.kind === "watchdog") watchdog = true;
+      else if (res.kind === "error") throw res.error;
+      else code = res.code;
+    } finally {
       clearInterval(hb);
       try { ff.off("log", onStats); } catch (_) {}
     }
     setProgressHandler(null);
+    if (watchdog) {
+      const wasMT = ffmpegMode() === "mt";
+      if (!retried && wasMT) {
+        say(`⚠️ MT core 60s stats မလာ — worker ကို ရပ်ပြီး single-thread core နဲ့ ပြန်စမ်းနေပါတယ်…`);
+        await terminateFFmpeg();
+        ff = null; // outer finally must not delete files on the dead worker (it would hang)
+        return ffmpegDubRecap(videoFile, segments, { ...opts, __forceST: true, __retried: true });
+      }
+      throw new Error("Dub recap render: MT ရော single-thread ရော 60s stats မလာပါ — ဖုန်း မှတ်ဉာဏ် မလောက်တာ ဖြစ်နိုင်ပါတယ်, video ကို အပိုင်းခွဲပြီး ပြန်စမ်းပါ");
+    }
     if (code !== 0) throw new Error("Dub recap render: FFmpeg render မအောင်မြင်ပါ (code " + code + ")");
     try { await ff.deleteFile("dub_in.mp4"); } catch (_) {}
     const data = await ff.readFile("dub_out.mp4");

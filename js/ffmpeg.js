@@ -77,9 +77,10 @@ async function fetchBlobURL(url, mime, fileLabel, log, onPct) {
 }
 
 /** Load ffmpeg once; returns the singleton instance. */
-export async function ensureFFmpeg(log) {
+export async function ensureFFmpeg(log, opts) {
   if (ffmpeg) return ffmpeg;
-  const kinds = window.crossOriginIsolated ? ["mt", "st"] : ["st"];
+  const forceKind = opts && opts.forceKind;
+  const kinds = forceKind ? [forceKind] : (window.crossOriginIsolated ? ["mt", "st"] : ["st"]);
   if (!window.crossOriginIsolated && log) {
     log("SharedArrayBuffer မရပါ — single-thread core ကို သုံးပါမယ်…");
   }
@@ -118,6 +119,22 @@ export async function ensureFFmpeg(log) {
     "FFmpeg ကို load မလုပ်နိုင်ပါ။ VPN ပိတ်ကြည့်ပါ၊ internet စစ်ပါ၊ ပြီးရင် browser refresh လုပ်ပြီး ပြန်စမ်းပါ။ (" +
     String((lastErr && lastErr.message) || lastErr) + ")"
   );
+}
+
+/**
+ * Terminate the current instance (if any) and forget it, so the next
+ * ensureFFmpeg() creates a fresh instance. Used by the render watchdog
+ * to abandon a stalled MT worker and retry on a fresh ST core. The
+ * library's terminate() also rejects the abandoned exec promise, so the
+ * old exec can never surface later as an unhandled rejection.
+ */
+export async function terminateFFmpeg() {
+  const inst = ffmpeg;
+  ffmpeg = null;
+  mode = null;
+  if (inst && typeof inst.terminate === "function") {
+    try { await inst.terminate(); } catch (_) {}
+  }
 }
 
 /** Run one ffmpeg command. files = {name: File|Blob|Uint8Array}. Returns ff instance. */
