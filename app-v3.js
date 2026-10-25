@@ -2274,7 +2274,7 @@ function foreignScriptOf(text) {
 }
 
 async function translateDubSegments(allSegs, onprog, say) {
-  const BATCH = 10;
+  const BATCH = 25;
   const out = new Array(allSegs.length).fill(null);
   allSegs.forEach((s, i) => { if (!String(s.text || "").trim()) out[i] = s.text || ""; });
   // Reliability: surface the FIRST swallowed Gemini error (message/status
