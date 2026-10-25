@@ -1117,7 +1117,8 @@ function rcInitLogoDrag() {
     lel.style.backgroundRepeat = "no-repeat";
     const shape = ($("rcLogoShape") || {}).value || "square";
     lel.style.borderRadius = shape === "circle" ? "50%" : "0";
-    lel.style.overflow = "hidden";
+    // No overflow:hidden: the resize handle sits OUTSIDE the logo box and must stay visible.
+    // (The logo background is clipped by border-radius on its own.)
   };
   update();
   let sx, sy, ox, oy;
@@ -1135,7 +1136,7 @@ function rcInitLogoDrag() {
   lel.addEventListener("pointerup", () => { sx = undefined; });
   // Resize handle for logo
   const lrh = document.createElement("div");
-  lrh.style.cssText = "position:absolute;right:0;bottom:0;width:32px;height:32px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;display:flex;align-items:center;justify-content:center;font-size:18px;color:#4da6ff;";
+  lrh.style.cssText = "position:absolute;right:-32px;bottom:-32px;width:32px;height:32px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;display:flex;align-items:center;justify-content:center;font-size:18px;color:#4da6ff;";
   lrh.textContent = "↘";
   lel.appendChild(lrh);
   let lrsx, lrsy, lrsz;
