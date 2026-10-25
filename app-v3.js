@@ -16,10 +16,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcRatio")?.addEventListener("change", () => {
     rcApplyLayout();
+    updateDurationHint();
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
-  $("rcRes")?.addEventListener("change", rcApplyLayout);
-  $("rcFit")?.addEventListener("change", rcApplyLayout);
+  $("rcRes")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
+  $("rcFit")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
   const smEl = $("rcSyncMethod");
   if (smEl) {
     smEl.value = getSyncMethod();
@@ -781,7 +782,32 @@ $("extractAudio").addEventListener("click", async () => {
 });
 
 // ---- step 5 extracted: timestamp sync mux (retryable without re-doing TTS) ----
+// Normalize mux segments: SRC scripts carry sourceStart/sourceEnd only
+// (parseRecapSegmentsStrict) — without this, start/end are undefined and
+// win/rate become NaN downstream. Returns {segments, badCount}.
+function normalizeMuxSegments(segments) {
+  const out = (segments || []).map((s) => ({ ...s,
+    start: (typeof s.start === "number" && isFinite(s.start)) ? s.start : s.sourceStart,
+    end: (typeof s.end === "number" && isFinite(s.end)) ? s.end : s.sourceEnd }));
+  const badCount = out.filter((s) => !(typeof s.start === "number" && isFinite(s.start) && typeof s.end === "number" && isFinite(s.end) && s.end > s.start)).length;
+  return { segments: out, badCount };
+}
+
+// Guard against restoring a previous run's audio onto a different video:
+// the 24h IDB restore only proves a run existed, not that the selected
+// file matches it. Runs saved before this guard lack the fields and are
+// allowed with a warning (never silently blocked).
+function muxRunMatchesFile(run, file) {
+  if (!run || !file) return false;
+  if (run.fileName && run.fileName !== file.name) return false;
+  if (run.fileSize && run.fileSize !== file.size) return false;
+  return true;
+}
+
 async function doRecapMux(ff, segments, segPieces, baseName) {
+  const norm = normalizeMuxSegments(segments);
+  if (norm.badCount) throw new Error(`doRecapMux: timestamp မပြည့်တဲ့ segment ${norm.badCount} ခု ရှိပါတယ် — script ကို စစ်ပါ`);
+  segments = norm.segments;
   // Memory-safe sync: NO adelay+amix (amix buffers all 17 full-timeline inputs
   // in WASM memory -> OOM on phones). Instead: per-segment atempo/atrim only,
   // then build the timeline with silence gaps + concat (sequential, low memory).
@@ -1960,6 +1986,8 @@ async function fixDuration(blob, ext, sec) {
 $("rcSyncOnly")?.addEventListener("click", async () => {
   if (!rcLastRun || !rcLastRun.segPieces) { alert("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!muxRunMatchesFile(rcLastRun, rcFile)) { alert("Sync လုပ်စရာ data က တခြား video နဲ့ပါ — Recap အရင်ပြန်လုပ်ပါ"); return; }
+  if (!rcLastRun.fileName || !rcLastRun.fileSize) log("rc", "⚠️ သိမ်းထားတဲ့ data မှာ file အထောက်အထား မပါလို့ video မှန်ကြောင်း အလိုအလျောက် စစ်မရပါ — video မှန်ရဲ့လား သေချာပါစေ", "err");
   setBusy(["rcSyncOnly", "startRecap"], true);
   const { segments, segPieces, baseName } = rcLastRun;
   setStep("mux", "run");
@@ -2131,7 +2159,7 @@ $("rcFile").addEventListener("change", async (e) => {
     const saved = await idbGet("rc-last");
     if (saved && saved.segments && saved.segPieces && (Date.now() - saved.savedAt) < 24 * 3600 * 1000) {
       // Auto-restore rcLastRun so Sync button works immediately
-      rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+      rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName, fileName: saved.fileName, fileSize: saved.fileSize };
       const sbAuto = $("rcSyncOnly");
       if (sbAuto) sbAuto.style.display = "";
       if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
@@ -2149,7 +2177,7 @@ $("rcFile").addEventListener("change", async (e) => {
         // Restore state
         if (saved.transcript) $("rcTranscript").value = saved.transcript;
         if (saved.script) $("rcScript").value = saved.script;
-        rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+        rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName, fileName: saved.fileName, fileSize: saved.fileSize };
         // Need the video file — user must re-select it
         alert("Video file ကို ပြန်ရွေးပေးပါ (အသံက သိမ်းထားပြီးသား)");
         bar.remove();
@@ -2565,6 +2593,7 @@ $("startRecap").addEventListener("click", async () => {
     // Circuit breaker: if the TTS server fails 3 times in a row, stop paying
     // its timeout on every remaining piece and use the browser path only.
     let srvTtsFailStreak = 0;
+    let browserFailStreak = 0; // consecutive failed browser-Edge attempts (fail-fast signal)
     let srvTtsDisabled = false;
     async function ttsPiece(text) {
       if (!srvTtsDisabled) {
@@ -2582,7 +2611,14 @@ $("startRecap").addEventListener("click", async () => {
           }
         }
       }
-      return await edgeTTS(text, voice);
+      try {
+        const b = await edgeTTS(text, voice);
+        browserFailStreak = 0;
+        return b;
+      } catch (e2) {
+        browserFailStreak++;
+        throw e2;
+      }
     }
     stageStart("tts");
     log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (server TTS \u2014 ${voice})\u2026`);
@@ -2596,7 +2632,10 @@ $("startRecap").addEventListener("click", async () => {
       const pieces = splitLongText(seg.text, 700);
       for (const pc of pieces) {
         let b = null, terr = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // Fail fast in a death spiral: once the server is gone and Edge
+        // keeps dying, further retries only burn timeouts.
+        const maxAttempts = (srvTtsDisabled && browserFailStreak >= 4) ? 1 : 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
             b = await ttsPiece(pc);
             if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
@@ -2604,11 +2643,14 @@ $("startRecap").addEventListener("click", async () => {
             break;
           } catch (e) {
             terr = e;
-            log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/3) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
+            log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/${maxAttempts}) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
             await new Promise((r) => setTimeout(r, 2000 * attempt));
           }
         }
-        if (!b || b.size === 0) throw terr || new Error("TTS မအောင်မြင်ပါ");
+        if (!b || b.size === 0) {
+          if (srvTtsDisabled) throw new Error("browser Edge TTS ဆက်တိုက် မရပါ — internet/VPN စစ်ပြီး ခဏစောင့်ပြီးမှ ပြန်စမ်းပါ" + (terr && terr.message ? ` (${terr.message})` : ""));
+          throw terr || new Error("TTS မအောင်မြင်ပါ");
+        }
         segPieces[i].push(b);
       }
       ttsDone++;
@@ -2676,6 +2718,7 @@ $("startRecap").addEventListener("click", async () => {
     try {
       await idbSet("rc-last", {
         segments, segPieces, baseName,
+        fileName: rcFile.name, fileSize: rcFile.size,
         savedAt: Date.now(),
         transcript: $("rcTranscript").value,
         script: $("rcScript").value,
@@ -2686,7 +2729,7 @@ $("startRecap").addEventListener("click", async () => {
     }
 
     // ---- step 5: sync + mux ----
-    rcLastRun = { segments, segPieces, baseName };
+    rcLastRun = { segments, segPieces, baseName, fileName: rcFile.name, fileSize: rcFile.size };
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
     const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
     // Dubbing: video-first (output = video duration). Recap: audio-first.
@@ -2827,21 +2870,11 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", "အမှား: " + (e.message || e), "err");
     setProgress("rc", 0, "");
     document.querySelectorAll("#rcSteps li.run").forEach((li) => { li.className = "fail"; });
+    // No retry button here on purpose: it used to route every failure to
+    // doRecapMux (a different engine, broken for SRC scripts). The main
+    // "🔄 Sync ပြန်လုပ်" button re-runs the saved run correctly.
     if (rcLastRun && rcLastRun.segPieces) {
-      const rb = document.createElement("button");
-      rb.className = "ghost";
-      rb.textContent = "🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)";
-      rb.onclick = async () => {
-        rb.disabled = true;
-        try {
-          log("rc", "🔄 sync ပြန်လုပ်နေပါတယ်…");
-          const ff2 = await ensureFFmpeg((m, c) => log("rc", m, c));
-          await doRecapMux(ff2, rcLastRun.segments, rcLastRun.segPieces, rcLastRun.baseName);
-        } catch (e2) {
-          log("rc", "အမှား: " + (e2.message || e2), "err");
-        } finally { rb.disabled = false; }
-      };
-      $("rcResults").appendChild(rb);
+      log("rc", "💡 သိမ်းထားတဲ့ အသံနဲ့ ပြန်လုပ်ချင်ရင် '🔄 Sync ပြန်လုပ်' ခလုတ်ကို နှိပ်ပါ (TTS ပြန်မလုပ်ဘူး)", "ok");
     }
   } finally {
     setProgressHandler(null);
