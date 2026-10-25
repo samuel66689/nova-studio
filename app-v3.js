@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
     smEl.value = getSyncMethod();
     smEl.addEventListener("change", () => {
       const m = setSyncMethod(smEl.value);
-      log("rc", m === "B" ? "🧪 Sync method: B (Audio Master Timeline — စမ်းသပ်ဆဲ)" : "Sync method: A (Current Sync)", "ok");
+      log("rc", m === "B" ? "Sync method: B (Audio Master Timeline)" : "Sync method: A (Current Sync)", "ok");
     });
   }
   // Video pause warning (Chrome background tab)
@@ -1135,7 +1135,8 @@ function rcInitLogoDrag() {
   lel.addEventListener("pointerup", () => { sx = undefined; });
   // Resize handle for logo
   const lrh = document.createElement("div");
-  lrh.style.cssText = "position:absolute;right:-8px;bottom:-8px;width:20px;height:20px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;";
+  lrh.style.cssText = "position:absolute;right:0;bottom:0;width:32px;height:32px;background:#fff;border-radius:50%;cursor:nwse-resize;touch-action:none;border:2px solid #4da6ff;display:flex;align-items:center;justify-content:center;font-size:18px;color:#4da6ff;";
+  lrh.textContent = "↘";
   lel.appendChild(lrh);
   let lrsx, lrsy, lrsz;
   lrh.addEventListener("pointerdown", (e) => {
@@ -1837,11 +1838,11 @@ async function checkStorageQuota() {
 
 /** Get series info from UI */
 /** Sync method selection for the audio-first (canvas) recap path.
- * "A" = current production sync (default). "B" = Audio Master Timeline
- * (experimental). Persisted in localStorage; invalid/missing -> "A".
+ * "B" = Audio Master Timeline (default). "A" = current production sync.
+ * Persisted in localStorage; only an explicit "A" stays "A", invalid/missing -> "B".
  * The mux fallback is unaffected. */
 const SYNC_METHOD_KEY = "nova_sync_method";
-function normalizeSyncMethod(v) { return v === "B" ? "B" : "A"; }
+function normalizeSyncMethod(v) { return v === "A" ? "A" : "B"; }
 function getSyncMethod() {
   let v = null;
   try { v = localStorage.getItem(SYNC_METHOD_KEY); } catch (_) {}
