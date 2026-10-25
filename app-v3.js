@@ -2336,6 +2336,10 @@ async function translateDubSegments(allSegs, onprog, say) {
         // Count mismatch or batch failure: redo line-by-line so a short
         // answer can never shift translations onto the wrong lines.
         for (const gi of idxs) { const t = await askOne(gi); if (t) out[gi] = t; }
+        // Fully recovered by per-line retries (every line now has a
+        // translation): not a failed batch, so the streak resets. Any line
+        // still unrecovered keeps the streak incremented.
+        if (idxs.every((gi) => out[gi] !== null)) badBatchStreak = 0;
       }
     }
     if (onprog) onprog(Math.min(i + BATCH, allSegs.length), allSegs.length);
