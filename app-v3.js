@@ -2,6 +2,7 @@
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261021a";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
 import { canvasExport, canvasRecapSync, canvasRecapSyncB, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
+import { ffmpegDubRecap } from "./js/dub-recap-render.js?v=20261023a";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -15,16 +16,25 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcRatio")?.addEventListener("change", () => {
     rcApplyLayout();
+    updateDurationHint();
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
-  $("rcRes")?.addEventListener("change", rcApplyLayout);
-  $("rcFit")?.addEventListener("change", rcApplyLayout);
+  $("rcRes")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
+  $("rcFit")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
   const smEl = $("rcSyncMethod");
   if (smEl) {
     smEl.value = getSyncMethod();
     smEl.addEventListener("change", () => {
       const m = setSyncMethod(smEl.value);
       log("rc", m === "B" ? "🧪 Sync method: B (Audio Master Timeline — စမ်းသပ်ဆဲ)" : "Sync method: A (Current Sync)", "ok");
+    });
+  }
+  const drEl = $("rcDubRender");
+  if (drEl) {
+    drEl.value = getDubRender();
+    drEl.addEventListener("change", () => {
+      const m = setDubRender(drEl.value);
+      log("rc", m === "recap" ? "🎬 Dub render: Recap render (ffmpeg — video က အသံနောက် လိုက်, 1.3× အပါ)" : "Dub render: Canvas (ပုံမှန်)", "ok");
     });
   }
   // Video pause warning (Chrome background tab)
@@ -772,7 +782,32 @@ $("extractAudio").addEventListener("click", async () => {
 });
 
 // ---- step 5 extracted: timestamp sync mux (retryable without re-doing TTS) ----
+// Normalize mux segments: SRC scripts carry sourceStart/sourceEnd only
+// (parseRecapSegmentsStrict) — without this, start/end are undefined and
+// win/rate become NaN downstream. Returns {segments, badCount}.
+function normalizeMuxSegments(segments) {
+  const out = (segments || []).map((s) => ({ ...s,
+    start: (typeof s.start === "number" && isFinite(s.start)) ? s.start : s.sourceStart,
+    end: (typeof s.end === "number" && isFinite(s.end)) ? s.end : s.sourceEnd }));
+  const badCount = out.filter((s) => !(typeof s.start === "number" && isFinite(s.start) && typeof s.end === "number" && isFinite(s.end) && s.end > s.start)).length;
+  return { segments: out, badCount };
+}
+
+// Guard against restoring a previous run's audio onto a different video:
+// the 24h IDB restore only proves a run existed, not that the selected
+// file matches it. Runs saved before this guard lack the fields and are
+// allowed with a warning (never silently blocked).
+function muxRunMatchesFile(run, file) {
+  if (!run || !file) return false;
+  if (run.fileName && run.fileName !== file.name) return false;
+  if (run.fileSize && run.fileSize !== file.size) return false;
+  return true;
+}
+
 async function doRecapMux(ff, segments, segPieces, baseName) {
+  const norm = normalizeMuxSegments(segments);
+  if (norm.badCount) throw new Error(`doRecapMux: timestamp မပြည့်တဲ့ segment ${norm.badCount} ခု ရှိပါတယ် — script ကို စစ်ပါ`);
+  segments = norm.segments;
   // Memory-safe sync: NO adelay+amix (amix buffers all 17 full-timeline inputs
   // in WASM memory -> OOM on phones). Instead: per-segment atempo/atrim only,
   // then build the timeline with silence gaps + concat (sequential, low memory).
@@ -1831,6 +1866,20 @@ async function checkStorageQuota() {
  * Dubbing (canvasDubSync) and the mux fallback are unaffected. */
 const SYNC_METHOD_KEY = "nova_sync_method";
 function normalizeSyncMethod(v) { return v === "B" ? "B" : "A"; }
+const DUB_RENDER_KEY = "nova_dub_render";
+function normalizeDubRender(v) { return v === "recap" ? "recap" : "canvas"; }
+function getDubRender() {
+  let v = null;
+  try { v = localStorage.getItem(DUB_RENDER_KEY); } catch (_) {}
+  return normalizeDubRender(v);
+}
+function setDubRender(v) {
+  const m = normalizeDubRender(v);
+  try { localStorage.setItem(DUB_RENDER_KEY, m); } catch (_) {}
+  const el = $("rcDubRender");
+  if (el) el.value = m;
+  return m;
+}
 function getSyncMethod() {
   let v = null;
   try { v = localStorage.getItem(SYNC_METHOD_KEY); } catch (_) {}
@@ -1937,6 +1986,8 @@ async function fixDuration(blob, ext, sec) {
 $("rcSyncOnly")?.addEventListener("click", async () => {
   if (!rcLastRun || !rcLastRun.segPieces) { alert("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
   if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!muxRunMatchesFile(rcLastRun, rcFile)) { alert("Sync လုပ်စရာ data က တခြား video နဲ့ပါ — Recap အရင်ပြန်လုပ်ပါ"); return; }
+  if (!rcLastRun.fileName || !rcLastRun.fileSize) log("rc", "⚠️ သိမ်းထားတဲ့ data မှာ file အထောက်အထား မပါလို့ video မှန်ကြောင်း အလိုအလျောက် စစ်မရပါ — video မှန်ရဲ့လား သေချာပါစေ", "err");
   setBusy(["rcSyncOnly", "startRecap"], true);
   const { segments, segPieces, baseName } = rcLastRun;
   setStep("mux", "run");
@@ -1976,15 +2027,20 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
+      const useDubRecap = getDubRender() === "recap";
+      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
+      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+        onlog: (m) => log("rc", m),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+      // ffmpeg output already carries correct duration metadata; the
+      // MediaRecorder duration patch applies to the canvas path only.
+      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
       let srt = null;
-      try { srt = segmentsToSRT(segments); }
+      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
         srt = null; // Do NOT create file with error message
@@ -2103,7 +2159,7 @@ $("rcFile").addEventListener("change", async (e) => {
     const saved = await idbGet("rc-last");
     if (saved && saved.segments && saved.segPieces && (Date.now() - saved.savedAt) < 24 * 3600 * 1000) {
       // Auto-restore rcLastRun so Sync button works immediately
-      rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+      rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName, fileName: saved.fileName, fileSize: saved.fileSize };
       const sbAuto = $("rcSyncOnly");
       if (sbAuto) sbAuto.style.display = "";
       if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
@@ -2121,7 +2177,7 @@ $("rcFile").addEventListener("change", async (e) => {
         // Restore state
         if (saved.transcript) $("rcTranscript").value = saved.transcript;
         if (saved.script) $("rcScript").value = saved.script;
-        rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName };
+        rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName, fileName: saved.fileName, fileSize: saved.fileSize };
         // Need the video file — user must re-select it
         alert("Video file ကို ပြန်ရွေးပေးပါ (အသံက သိမ်းထားပြီးသား)");
         bar.remove();
@@ -2187,6 +2243,103 @@ $("previewVoice").addEventListener("click", async () => {
     btn.textContent = oldT;
   }
 });
+
+// ---- dubbing (wordbyword) translation: strict Burmese-only + repair ----
+// The old inline prompt had no foreign-script ban and silently fell back
+// to the SOURCE text whenever a batch failed or returned fewer lines —
+// that is how Thai/Korean/Chinese text flooded dubbing scripts. This
+// helper locks the language, demands an exact line count, redoes
+// mismatched batches line-by-line, then scans for foreign scripts and
+// re-translates offenders; anything still bad is reported loudly.
+const DUB_TRANSLATE_RULES = [
+  "You are translating drama dialogue into Burmese for voice dubbing.",
+  "Translate each numbered line into natural spoken Burmese (စကားပြော).",
+  "STRICT RULES:",
+  "- Output ONLY in Burmese (Myanmar) script. NEVER use Chinese, Thai, Korean, Japanese or Latin letters in a translation.",
+  "- People's names and place names: write them in Burmese script (transliterate the sound).",
+  "- Return EXACTLY one translation per input line, in the same order, one translation per line.",
+  "- No numbering, no explanations, no quotes, no blank lines.",
+  "- Keep each translation about as long as its original line (it must fit the same timing).",
+  "- Natural spoken meaning first; do not mirror the original word order; no formal written particles.",
+].join("\n");
+
+function foreignScriptOf(text) {
+  const t = String(text || "");
+  if (/[\u3040-\u30ff]/.test(t)) return "ဂျပန်";
+  if (/[\uac00-\ud7a3]/.test(t)) return "ကိုရီးယား";
+  if (/[\u4e00-\u9fff]/.test(t)) return "တရုတ်";
+  if (/[\u0e00-\u0e7f]/.test(t)) return "ထိုင်း";
+  if (/[A-Za-z]{4,}/.test(t)) return "အင်္ဂလိပ်";
+  return null;
+}
+
+async function translateDubSegments(allSegs, onprog, say) {
+  const BATCH = 10;
+  const out = new Array(allSegs.length).fill(null);
+  allSegs.forEach((s, i) => { if (!String(s.text || "").trim()) out[i] = s.text || ""; });
+  const askBatch = async (idxs) => {
+    const prompt = DUB_TRANSLATE_RULES + "\n\n" +
+      idxs.map((gi, j) => `${j + 1}. ${allSegs[gi].text}`).join("\n");
+    const res = await geminiText(prompt, 8000);
+    return String(res || "").trim().split("\n")
+      .map((l) => l.replace(/^\d+[.)]\s*/, "").trim());
+  };
+  const askOne = async (gi) => {
+    for (let a = 0; a < 2; a++) {
+      try {
+        const lines = await askBatch([gi]);
+        const t = (lines || []).join(" ").trim();
+        if (t) return t;
+      } catch (e) {}
+    }
+    return null;
+  };
+  for (let i = 0; i < allSegs.length; i += BATCH) {
+    const idxs = [];
+    for (let j = i; j < Math.min(i + BATCH, allSegs.length); j++) {
+      if (out[j] === null) idxs.push(j);
+    }
+    if (idxs.length) {
+      let lines = null;
+      try { lines = await askBatch(idxs); } catch (e) { lines = null; }
+      if (lines && lines.length === idxs.length) {
+        idxs.forEach((gi, j) => { out[gi] = lines[j]; });
+      } else {
+        // Count mismatch or batch failure: redo line-by-line so a short
+        // answer can never shift translations onto the wrong lines.
+        for (const gi of idxs) { const t = await askOne(gi); if (t) out[gi] = t; }
+      }
+    }
+    if (onprog) onprog(Math.min(i + BATCH, allSegs.length), allSegs.length);
+  }
+  const badIdx = () => {
+    const b = [];
+    out.forEach((t, gi) => {
+      if (!String(allSegs[gi].text || "").trim()) return;
+      if (!t || foreignScriptOf(t)) b.push(gi);
+    });
+    return b;
+  };
+  let bad = badIdx();
+  for (let round = 0; round < 2 && bad.length; round++) {
+    if (say) say(`⚠️ နိုင်ငံခြားစာ ပါ/ပျက်နေတဲ့ ကြောင်း ${bad.length} ကြောင်း ပြန်ပြန်နေပါတယ်… (အကြိမ် ${round + 1})`);
+    for (const gi of bad) {
+      const t = await askOne(gi);
+      if (t && !foreignScriptOf(t)) out[gi] = t;
+      else if (t && !out[gi]) out[gi] = t;
+    }
+    bad = badIdx();
+  }
+  if (bad.length && say) {
+    say(`❌ ကြောင်း ${bad.length} ကြောင်း ဘာသာပြန် မသန့်သေးပါ — TTS မစခင် စစ်ပါ: ` +
+      bad.slice(0, 15).map((gi) => `#${gi + 1}(${out[gi] ? (foreignScriptOf(out[gi]) || "?") : "မရ"})`).join(", ") +
+      (bad.length > 15 ? " …" : ""));
+  }
+  return allSegs.map((s, gi) => ({
+    start: s.start, end: s.end,
+    text: out[gi] !== null ? out[gi] : s.text,
+  }));
+}
 
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
@@ -2322,29 +2475,14 @@ $("startRecap").addEventListener("click", async () => {
       setStep("script", "done");
     }
     if (!segments && rcStyle === "wordbyword") {
-      // Word-by-word dubbing: translate transcript directly, keep original timing
+      // Word-by-word dubbing: translate transcript directly, keep original
+      // timing. Strict Burmese-only translation with foreign-script scan +
+      // auto re-translate lives in translateDubSegments (no silent fallback).
       setProgress("rc", 55, "စာသားတွေ မြန်မာလို ပြန်နေပါတယ်…");
       log("rc", "🎙️ Word-by-word dubbing — transcript ကို တိုက်ရိုက် ဘာသာပြန်နေပါတယ်…");
-      segments = [];
-      const BATCH = 10;
-      for (let i = 0; i < allSegs.length; i += BATCH) {
-        const batch = allSegs.slice(i, i + BATCH);
-        const prompt = "Translate each line to natural spoken Burmese (စကားပြော). " +
-          "Return ONLY the translations, one per line, in the same order. " +
-          "No numbering, no explanations.\n\n" +
-          batch.map((s, j) => `${j + 1}. ${s.text}`).join("\n");
-        try {
-          const out = await geminiText(prompt, 8000);
-          const lines = out.trim().split("\n").map((l) => l.replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean);
-          batch.forEach((s, j) => {
-            segments.push({ start: s.start, end: s.end, text: lines[j] || s.text });
-          });
-        } catch (e) {
-          // Fallback: use original text
-          batch.forEach((s) => segments.push({ start: s.start, end: s.end, text: s.text }));
-        }
-        setProgress("rc", 55 + (i / allSegs.length) * 10, `ဘာသာပြန်နေပါတယ်… (${Math.min(i + BATCH, allSegs.length)}/${allSegs.length})`);
-      }
+      segments = await translateDubSegments(allSegs,
+        (done, total) => setProgress("rc", 55 + (done / total) * 10, `ဘာသာပြန်နေပါတယ်… (${done}/${total})`),
+        (m) => log("rc", m));
       log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
       setStep("script", "done");
     }
@@ -2455,6 +2593,7 @@ $("startRecap").addEventListener("click", async () => {
     // Circuit breaker: if the TTS server fails 3 times in a row, stop paying
     // its timeout on every remaining piece and use the browser path only.
     let srvTtsFailStreak = 0;
+    let browserFailStreak = 0; // consecutive failed browser-Edge attempts (fail-fast signal)
     let srvTtsDisabled = false;
     async function ttsPiece(text) {
       if (!srvTtsDisabled) {
@@ -2472,7 +2611,14 @@ $("startRecap").addEventListener("click", async () => {
           }
         }
       }
-      return await edgeTTS(text, voice);
+      try {
+        const b = await edgeTTS(text, voice);
+        browserFailStreak = 0;
+        return b;
+      } catch (e2) {
+        browserFailStreak++;
+        throw e2;
+      }
     }
     stageStart("tts");
     log("rc", `4\uFE0F\u20E3 \u1021\u101E\u1036\u1011\u103d\u1000\u1039\u1014\u1031\u1015\u102B\u1010\u101A\u103a (server TTS \u2014 ${voice})\u2026`);
@@ -2486,7 +2632,10 @@ $("startRecap").addEventListener("click", async () => {
       const pieces = splitLongText(seg.text, 700);
       for (const pc of pieces) {
         let b = null, terr = null;
-        for (let attempt = 1; attempt <= 3; attempt++) {
+        // Fail fast in a death spiral: once the server is gone and Edge
+        // keeps dying, further retries only burn timeouts.
+        const maxAttempts = (srvTtsDisabled && browserFailStreak >= 4) ? 1 : 3;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
             b = await ttsPiece(pc);
             if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
@@ -2494,11 +2643,14 @@ $("startRecap").addEventListener("click", async () => {
             break;
           } catch (e) {
             terr = e;
-            log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/3) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
+            log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/${maxAttempts}) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
             await new Promise((r) => setTimeout(r, 2000 * attempt));
           }
         }
-        if (!b || b.size === 0) throw terr || new Error("TTS မအောင်မြင်ပါ");
+        if (!b || b.size === 0) {
+          if (srvTtsDisabled) throw new Error("browser Edge TTS ဆက်တိုက် မရပါ — internet/VPN စစ်ပြီး ခဏစောင့်ပြီးမှ ပြန်စမ်းပါ" + (terr && terr.message ? ` (${terr.message})` : ""));
+          throw terr || new Error("TTS မအောင်မြင်ပါ");
+        }
         segPieces[i].push(b);
       }
       ttsDone++;
@@ -2566,6 +2718,7 @@ $("startRecap").addEventListener("click", async () => {
     try {
       await idbSet("rc-last", {
         segments, segPieces, baseName,
+        fileName: rcFile.name, fileSize: rcFile.size,
         savedAt: Date.now(),
         transcript: $("rcTranscript").value,
         script: $("rcScript").value,
@@ -2576,7 +2729,7 @@ $("startRecap").addEventListener("click", async () => {
     }
 
     // ---- step 5: sync + mux ----
-    rcLastRun = { segments, segPieces, baseName };
+    rcLastRun = { segments, segPieces, baseName, fileName: rcFile.name, fileSize: rcFile.size };
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
     const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
     // Dubbing: video-first (output = video duration). Recap: audio-first.
@@ -2611,15 +2764,20 @@ $("startRecap").addEventListener("click", async () => {
           throw new Error(msg);
         }
       }
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await canvasDubSync(rcFile, segsWithAudio, {
+      const useDubRecap = getDubRender() === "recap";
+      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
+      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
         flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
         ...getStyleOpts(),
         ...getRcDims(),
         onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
+        onlog: (m) => log("rc", m),
       });
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+      // ffmpeg output already carries correct duration metadata; the
+      // MediaRecorder duration patch applies to the canvas path only.
+      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
       let srt = null;
-      try { srt = segmentsToSRT(segments); }
+      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
       catch (e) {
         log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
         srt = null; // Do NOT create file with error message
@@ -2712,21 +2870,11 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", "အမှား: " + (e.message || e), "err");
     setProgress("rc", 0, "");
     document.querySelectorAll("#rcSteps li.run").forEach((li) => { li.className = "fail"; });
+    // No retry button here on purpose: it used to route every failure to
+    // doRecapMux (a different engine, broken for SRC scripts). The main
+    // "🔄 Sync ပြန်လုပ်" button re-runs the saved run correctly.
     if (rcLastRun && rcLastRun.segPieces) {
-      const rb = document.createElement("button");
-      rb.className = "ghost";
-      rb.textContent = "🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)";
-      rb.onclick = async () => {
-        rb.disabled = true;
-        try {
-          log("rc", "🔄 sync ပြန်လုပ်နေပါတယ်…");
-          const ff2 = await ensureFFmpeg((m, c) => log("rc", m, c));
-          await doRecapMux(ff2, rcLastRun.segments, rcLastRun.segPieces, rcLastRun.baseName);
-        } catch (e2) {
-          log("rc", "အမှား: " + (e2.message || e2), "err");
-        } finally { rb.disabled = false; }
-      };
-      $("rcResults").appendChild(rb);
+      log("rc", "💡 သိမ်းထားတဲ့ အသံနဲ့ ပြန်လုပ်ချင်ရင် '🔄 Sync ပြန်လုပ်' ခလုတ်ကို နှိပ်ပါ (TTS ပြန်မလုပ်ဘူး)", "ok");
     }
   } finally {
     setProgressHandler(null);
