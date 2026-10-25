@@ -2277,6 +2277,20 @@ async function translateDubSegments(allSegs, onprog, say) {
   const BATCH = 10;
   const out = new Array(allSegs.length).fill(null);
   allSegs.forEach((s, i) => { if (!String(s.text || "").trim()) out[i] = s.text || ""; });
+  // Reliability: surface the FIRST swallowed Gemini error (message/status
+  // only) and stop after repeated batch failures, instead of grinding
+  // every line plus two repair rounds while Gemini is systematically down.
+  // Long alphanumeric runs are redacted so no key-like token can leak.
+  const safeErrMsg = (e) => String((e && e.message) || e || "")
+    .replace(/[A-Za-z0-9_\-]{32,}/g, "[redacted]").slice(0, 200);
+  let firstErrMsg = null;
+  const noteErr = (e) => {
+    if (firstErrMsg !== null) return;
+    const m = safeErrMsg(e);
+    if (!m) return;
+    firstErrMsg = m;
+    if (say) say(`⚠️ ဘာသာပြန် error (ပထမ): ${firstErrMsg}`);
+  };
   const askBatch = async (idxs) => {
     const prompt = DUB_TRANSLATE_RULES + "\n\n" +
       idxs.map((gi, j) => `${j + 1}. ${allSegs[gi].text}`).join("\n");
@@ -2290,10 +2304,11 @@ async function translateDubSegments(allSegs, onprog, say) {
         const lines = await askBatch([gi]);
         const t = (lines || []).join(" ").trim();
         if (t) return t;
-      } catch (e) {}
+      } catch (e) { noteErr(e); }
     }
     return null;
   };
+  let badBatchStreak = 0; // consecutive bad batches (throw or count mismatch)
   for (let i = 0; i < allSegs.length; i += BATCH) {
     const idxs = [];
     for (let j = i; j < Math.min(i + BATCH, allSegs.length); j++) {
@@ -2301,13 +2316,30 @@ async function translateDubSegments(allSegs, onprog, say) {
     }
     if (idxs.length) {
       let lines = null;
-      try { lines = await askBatch(idxs); } catch (e) { lines = null; }
-      if (lines && lines.length === idxs.length) {
+      try { lines = await askBatch(idxs); } catch (e) { lines = null; noteErr(e); }
+      // A batch is usable ONLY on an exact line-count match. Anything else
+      // (throw, or a short/long count) is a bad batch: it still gets the
+      // safe per-line redo below, but 3 bad batches in a row means Gemini
+      // is systematically failing — stop loudly instead of grinding on.
+      const batchOk = !!(lines && lines.length === idxs.length);
+      if (!batchOk) {
+        badBatchStreak++;
+        if (badBatchStreak >= 3) {
+          throw new Error(`ဘာသာပြန် ဆက်တိုက် ${badBatchStreak} ကြိမ် မအောင်မြင်ပါ (batch ${i / BATCH + 1}) — ${firstErrMsg ? `Gemini error: ${firstErrMsg}` : "Gemini က စာမပြန်ပါ"} — internet/key/quota စစ်ပြီး ပြန်စမ်းပါ`);
+        }
+      } else {
+        badBatchStreak = 0;
+      }
+      if (batchOk) {
         idxs.forEach((gi, j) => { out[gi] = lines[j]; });
       } else {
         // Count mismatch or batch failure: redo line-by-line so a short
         // answer can never shift translations onto the wrong lines.
         for (const gi of idxs) { const t = await askOne(gi); if (t) out[gi] = t; }
+        // Fully recovered by per-line retries (every line now has a
+        // translation): not a failed batch, so the streak resets. Any line
+        // still unrecovered keeps the streak incremented.
+        if (idxs.every((gi) => out[gi] !== null)) badBatchStreak = 0;
       }
     }
     if (onprog) onprog(Math.min(i + BATCH, allSegs.length), allSegs.length);
@@ -2323,12 +2355,19 @@ async function translateDubSegments(allSegs, onprog, say) {
   let bad = badIdx();
   for (let round = 0; round < 2 && bad.length; round++) {
     if (say) say(`⚠️ နိုင်ငံခြားစာ ပါ/ပျက်နေတဲ့ ကြောင်း ${bad.length} ကြောင်း ပြန်ပြန်နေပါတယ်… (အကြိမ် ${round + 1})`);
+    const beforeRound = bad.length;
     for (const gi of bad) {
       const t = await askOne(gi);
       if (t && !foreignScriptOf(t)) out[gi] = t;
       else if (t && !out[gi]) out[gi] = t;
     }
     bad = badIdx();
+    // Round 1 fixed nothing: the failure is systematic, so a second round
+    // would only burn another full set of calls. Report and stop repairing.
+    if (round === 0 && bad.length >= beforeRound) {
+      if (say) say(`❌ အကြိမ် 1 မှာ တစ်ကြောင်းမှ မပြင်နိုင်ပါ — အကြိမ် 2 ကို ကျော်လိုက်ပါပြီ (Gemini error ကို စစ်ပါ)`);
+      break;
+    }
   }
   if (bad.length && say) {
     say(`❌ ကြောင်း ${bad.length} ကြောင်း ဘာသာပြန် မသန့်သေးပါ — TTS မစခင် စစ်ပါ: ` +
