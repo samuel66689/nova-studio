@@ -802,16 +802,18 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
     await document.fonts.ready;
   } catch (_) {}
 
-  const video = document.createElement("video");
+  let video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
   video.preload = "auto";
   video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
   document.body.appendChild(video);
 
-  // Load the source video — ONE automatic retry with a fresh object URL.
-  // A transient load failure (e.g. memory pressure right after TTS) must
-  // not kill the whole run the way it could in the sequential pipeline.
+  // Load the source video — ONE automatic retry with a FRESH ELEMENT and
+  // a fresh object URL, after a longer pause. A transient load failure
+  // (e.g. memory pressure right after TTS) must not kill the whole run:
+  // the earlier retry (fresh URL only) still failed, so the retry now also
+  // replaces the video element itself (new decoder) and waits longer.
   let url = URL.createObjectURL(videoBlob);
   const loadOnce = () => new Promise((res, rej) => {
     const to = setTimeout(() => rej(new Error("video metadata timeout")), 15000);
@@ -827,9 +829,18 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
   try {
     await loadOnce();
   } catch (e1) {
-    try { console.warn("[sync-b] video load failed once, retrying:", e1.message); } catch (_) {}
-    await new Promise((r) => setTimeout(r, 600));
+    try { console.warn("[sync-b] video load failed once, retrying with a fresh element:", e1.message); } catch (_) {}
+    // Fresh element, not just a fresh URL: the decoder itself may be wedged
+    // after a long session, and a new element gets a new decoder.
+    try { video.remove(); } catch (_) {}
     URL.revokeObjectURL(url);
+    await new Promise((r) => setTimeout(r, 1500));
+    video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+    document.body.appendChild(video);
     url = URL.createObjectURL(videoBlob);
     await loadOnce(); // second failure -> throw to caller (no silent fallback)
   }

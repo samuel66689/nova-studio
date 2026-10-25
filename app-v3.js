@@ -1954,6 +1954,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   const { segments, segPieces, baseName } = rcLastRun;
   setStep("mux", "run");
   try {
+    acquireWakeLock().catch(() => {});
     log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
     if (useAudioFirst) {
@@ -2033,6 +2034,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
     log("rc", "အမှား: " + (e.message || e), "err");
     setStep("mux", "fail");
   } finally {
+    releaseWakeLock();
     setBusy(["rcSyncOnly", "startRecap"], false);
   }
 });
@@ -2251,7 +2253,13 @@ $("startRecap").addEventListener("click", async () => {
     // ---- step 3: recap script ----
     setStep("script", "run");
     const rcStyle = ($("rcStyle") || {}).value || "story";
-    const watchMode = ($("rcWatchMode") || {}).value || "frames";
+    let watchMode = ($("rcWatchMode") || {}).value || "frames";
+    // Full-video upload caps at 100MB on the server — fall back to frames
+    // BEFORE uploading, instead of failing after a long upload.
+    if (watchMode === "fullvideo" && rcFile && rcFile.size > 100 * 1024 * 1024) {
+      log("rc", `⚠️ Video က ${(rcFile.size / 1048576).toFixed(0)}MB — full-video mode က 100MB အထိပဲ တင်လို့ရပါတယ်, frames mode နဲ့ အလိုအလျောက် ဆက်လုပ်ပါမယ်…`, "err");
+      watchMode = "frames";
+    }
     let segments = null;
     if (!segments && watchMode === "fullvideo") {
       // Full video via Gemini Files API — AI watches the entire video
