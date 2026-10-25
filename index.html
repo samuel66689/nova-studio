@@ -551,11 +551,6 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
     <label>Video file ရွေးပါ</label>
     <input type="file" id="rcFile" accept="video/*">
     <div class="fileinfo" id="rcFileInfo"></div>
-    <div>
-      <label>SRT file</label>
-      <input type="file" id="rcSrtFile" accept=".srt">
-      <div class="fileinfo" id="rcSrtInfo"></div>
-    </div>
 
     <div id="rcBlurSection" style="display:none;" class="rc-preview-section">
       <div class="rc-tools" id="rcTools">
@@ -606,7 +601,6 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
         <select id="rcStyle">
           <option value="story">📖 Story — ဇာတ်လမ်းရှင်း</option>
           <option value="viral">🔥 Viral — hook ဆန်ဆန်</option>
-          <option value="wordbyword">🎙️ Word-by-word dubbing — တိုက်ရိုက် dub</option>
         </select>
       </div>
       <div>
@@ -697,13 +691,6 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
           <select id="rcSyncMethod" style="width:100%;">
             <option value="A" selected>Method A — Current Sync (ပုံမှန် · အကြံပြု)</option>
             <option value="B">Method B — Audio Master Timeline (စမ်းသပ်ဆဲ 🧪)</option>
-          </select>
-        </div>
-        <div style="margin-top:6px;">
-          <label>Dub render (dubbing mode အတွက်သာ)</label>
-          <select id="rcDubRender" style="width:100%;">
-            <option value="canvas" selected>Canvas (ပုံမှန်)</option>
-            <option value="recap">🎬 Recap render (ffmpeg) — video က အသံနောက် လိုက် · စကားမပြတ် · 1.3× (စမ်းသပ်ဆဲ 🧪)</option>
           </select>
         </div>
       </div>

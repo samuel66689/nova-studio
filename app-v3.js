@@ -1,8 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261021a";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
-import { canvasExport, canvasRecapSync, canvasRecapSyncB, canvasDubSync, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
-import { ffmpegDubRecap } from "./js/dub-recap-render.js?v=20261023a";
+import { canvasExport, canvasRecapSync, canvasRecapSyncB, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261021a";
 
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
@@ -27,14 +26,6 @@ document.addEventListener("DOMContentLoaded", () => {
     smEl.addEventListener("change", () => {
       const m = setSyncMethod(smEl.value);
       log("rc", m === "B" ? "🧪 Sync method: B (Audio Master Timeline — စမ်းသပ်ဆဲ)" : "Sync method: A (Current Sync)", "ok");
-    });
-  }
-  const drEl = $("rcDubRender");
-  if (drEl) {
-    drEl.value = getDubRender();
-    drEl.addEventListener("change", () => {
-      const m = setDubRender(drEl.value);
-      log("rc", m === "recap" ? "🎬 Dub render: Recap render (ffmpeg — video က အသံနောက် လိုက်, 1.3× အပါ)" : "Dub render: Canvas (ပုံမှန်)", "ok");
     });
   }
   // Video pause warning (Chrome background tab)
@@ -1087,21 +1078,6 @@ function rcRenderBlurList() {
     list.appendChild(d);
   });
 }
-// ---- SRT upload ----
-let rcSrtSegments = null;
-$("rcSrtFile")?.addEventListener("change", async (e) => {
-  const f = e.target.files[0];
-  if (!f) { rcSrtSegments = null; $("rcSrtInfo").textContent = ""; return; }
-  try {
-    const txt = await f.text();
-    rcSrtSegments = parseSRT(txt);
-    $("rcSrtInfo").textContent = `${f.name} — ${rcSrtSegments.length} ကြောင်း`;
-    log("rc", `SRT ရပါပြီ (${rcSrtSegments.length} ကြောင်း) ✅`, "ok");
-  } catch (err) {
-    $("rcSrtInfo").textContent = "SRT ဖတ်မရပါ";
-    rcSrtSegments = null;
-  }
-});
 
 // ---- Logo upload + drag ----
 let rcLogoImg = null;
@@ -1863,23 +1839,9 @@ async function checkStorageQuota() {
 /** Sync method selection for the audio-first (canvas) recap path.
  * "A" = current production sync (default). "B" = Audio Master Timeline
  * (experimental). Persisted in localStorage; invalid/missing -> "A".
- * Dubbing (canvasDubSync) and the mux fallback are unaffected. */
+ * The mux fallback is unaffected. */
 const SYNC_METHOD_KEY = "nova_sync_method";
 function normalizeSyncMethod(v) { return v === "B" ? "B" : "A"; }
-const DUB_RENDER_KEY = "nova_dub_render";
-function normalizeDubRender(v) { return v === "recap" ? "recap" : "canvas"; }
-function getDubRender() {
-  let v = null;
-  try { v = localStorage.getItem(DUB_RENDER_KEY); } catch (_) {}
-  return normalizeDubRender(v);
-}
-function setDubRender(v) {
-  const m = normalizeDubRender(v);
-  try { localStorage.setItem(DUB_RENDER_KEY, m); } catch (_) {}
-  const el = $("rcDubRender");
-  if (el) el.value = m;
-  return m;
-}
 function getSyncMethod() {
   let v = null;
   try { v = localStorage.getItem(SYNC_METHOD_KEY); } catch (_) {}
@@ -1994,70 +1956,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   try {
     log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
-    // Dubbing: video-first (output = video duration). Recap: audio-first.
-    if (isDubbing) {
-      setProgress("rc", 90, "🎙️ Dubbing sync (video-first)…");
-      log("rc", "🎙️ Video timing အတိုင်း dubbing လုပ်နေပါတယ်…");
-      const wantFlip = $("rcFlip") && $("rcFlip").checked;
-      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
-      const segsWithAudio = segments.map((s, i) => {
-        const pieces = segPieces[s._i] || segPieces[i] || [];
-        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        const out = {
-          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
-          start: s.start, end: s.end,  // deprecated alias
-          text: s.text, audioBlob,
-          audioDuration: s.audioDuration,
-        };
-        // Preserve genuine source timestamps only — never invent them
-        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
-        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
-        return out;
-      });
-      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
-      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
-      // timestamps are never compared against source duration.
-      {
-        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
-        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
-        if (!v.ok) {
-          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
-          log("rc", msg, "err");
-          throw new Error(msg);
-        }
-      }
-      const useDubRecap = getDubRender() === "recap";
-      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
-      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
-        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
-        ...getStyleOpts(),
-        ...getRcDims(),
-        onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
-        onlog: (m) => log("rc", m),
-      });
-      // ffmpeg output already carries correct duration metadata; the
-      // MediaRecorder duration patch applies to the canvas path only.
-      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
-      let srt = null;
-      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
-      catch (e) {
-        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = null; // Do NOT create file with error message
-      }
-      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
-      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-      $("rcResults").innerHTML = "";
-      const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
-      $("rcResults").appendChild(r1.row);
-      const r2 = srtBlob ? dlRow(baseName + "_dubbed.srt", srtBlob) : null;
-      if (r2) $("rcResults").appendChild(r2.row);
-      const r3 = dlRow(baseName + "_script.txt", txtBlob);
-      $("rcResults").appendChild(r3.row);
-      setProgress("rc", 100, "ပြီးပါပြီ ✅");
-      log("rc", "Dubbing ပြီးပါပြီ ✅", "ok");
-      setStep("mux", "done");
-    } else if (useAudioFirst) {
+    if (useAudioFirst) {
       setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
       const wantFlip = $("rcFlip") && $("rcFlip").checked;
       const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
@@ -2244,141 +2143,6 @@ $("previewVoice").addEventListener("click", async () => {
   }
 });
 
-// ---- dubbing (wordbyword) translation: strict Burmese-only + repair ----
-// The old inline prompt had no foreign-script ban and silently fell back
-// to the SOURCE text whenever a batch failed or returned fewer lines —
-// that is how Thai/Korean/Chinese text flooded dubbing scripts. This
-// helper locks the language, demands an exact line count, redoes
-// mismatched batches line-by-line, then scans for foreign scripts and
-// re-translates offenders; anything still bad is reported loudly.
-const DUB_TRANSLATE_RULES = [
-  "You are translating drama dialogue into Burmese for voice dubbing.",
-  "Translate each numbered line into natural spoken Burmese (စကားပြော).",
-  "STRICT RULES:",
-  "- Output ONLY in Burmese (Myanmar) script. NEVER use Chinese, Thai, Korean, Japanese or Latin letters in a translation.",
-  "- People's names and place names: write them in Burmese script (transliterate the sound).",
-  "- Return EXACTLY one translation per input line, in the same order, one translation per line.",
-  "- No numbering, no explanations, no quotes, no blank lines.",
-  "- Keep each translation about as long as its original line (it must fit the same timing).",
-  "- Natural spoken meaning first; do not mirror the original word order; no formal written particles.",
-].join("\n");
-
-function foreignScriptOf(text) {
-  const t = String(text || "");
-  if (/[\u3040-\u30ff]/.test(t)) return "ဂျပန်";
-  if (/[\uac00-\ud7a3]/.test(t)) return "ကိုရီးယား";
-  if (/[\u4e00-\u9fff]/.test(t)) return "တရုတ်";
-  if (/[\u0e00-\u0e7f]/.test(t)) return "ထိုင်း";
-  if (/[A-Za-z]{4,}/.test(t)) return "အင်္ဂလိပ်";
-  return null;
-}
-
-async function translateDubSegments(allSegs, onprog, say) {
-  const BATCH = 25;
-  const out = new Array(allSegs.length).fill(null);
-  allSegs.forEach((s, i) => { if (!String(s.text || "").trim()) out[i] = s.text || ""; });
-  // Reliability: surface the FIRST swallowed Gemini error (message/status
-  // only) and stop after repeated batch failures, instead of grinding
-  // every line plus two repair rounds while Gemini is systematically down.
-  // Long alphanumeric runs are redacted so no key-like token can leak.
-  const safeErrMsg = (e) => String((e && e.message) || e || "")
-    .replace(/[A-Za-z0-9_\-]{32,}/g, "[redacted]").slice(0, 200);
-  let firstErrMsg = null;
-  const noteErr = (e) => {
-    if (firstErrMsg !== null) return;
-    const m = safeErrMsg(e);
-    if (!m) return;
-    firstErrMsg = m;
-    if (say) say(`⚠️ ဘာသာပြန် error (ပထမ): ${firstErrMsg}`);
-  };
-  const askBatch = async (idxs) => {
-    const prompt = DUB_TRANSLATE_RULES + "\n\n" +
-      idxs.map((gi, j) => `${j + 1}. ${allSegs[gi].text}`).join("\n");
-    const res = await geminiText(prompt, 8000);
-    return String(res || "").trim().split("\n")
-      .map((l) => l.replace(/^\d+[.)]\s*/, "").trim());
-  };
-  const askOne = async (gi) => {
-    for (let a = 0; a < 2; a++) {
-      try {
-        const lines = await askBatch([gi]);
-        const t = (lines || []).join(" ").trim();
-        if (t) return t;
-      } catch (e) { noteErr(e); }
-    }
-    return null;
-  };
-  let badBatchStreak = 0; // consecutive bad batches (throw or count mismatch)
-  for (let i = 0; i < allSegs.length; i += BATCH) {
-    const idxs = [];
-    for (let j = i; j < Math.min(i + BATCH, allSegs.length); j++) {
-      if (out[j] === null) idxs.push(j);
-    }
-    if (idxs.length) {
-      let lines = null;
-      try { lines = await askBatch(idxs); } catch (e) { lines = null; noteErr(e); }
-      // A batch is usable ONLY on an exact line-count match. Anything else
-      // (throw, or a short/long count) is a bad batch: it still gets the
-      // safe per-line redo below, but 3 bad batches in a row means Gemini
-      // is systematically failing — stop loudly instead of grinding on.
-      const batchOk = !!(lines && lines.length === idxs.length);
-      if (!batchOk) {
-        badBatchStreak++;
-        if (badBatchStreak >= 3) {
-          throw new Error(`ဘာသာပြန် ဆက်တိုက် ${badBatchStreak} ကြိမ် မအောင်မြင်ပါ (batch ${i / BATCH + 1}) — ${firstErrMsg ? `Gemini error: ${firstErrMsg}` : "Gemini က စာမပြန်ပါ"} — internet/key/quota စစ်ပြီး ပြန်စမ်းပါ`);
-        }
-      } else {
-        badBatchStreak = 0;
-      }
-      if (batchOk) {
-        idxs.forEach((gi, j) => { out[gi] = lines[j]; });
-      } else {
-        // Count mismatch or batch failure: redo line-by-line so a short
-        // answer can never shift translations onto the wrong lines.
-        for (const gi of idxs) { const t = await askOne(gi); if (t) out[gi] = t; }
-        // Fully recovered by per-line retries (every line now has a
-        // translation): not a failed batch, so the streak resets. Any line
-        // still unrecovered keeps the streak incremented.
-        if (idxs.every((gi) => out[gi] !== null)) badBatchStreak = 0;
-      }
-    }
-    if (onprog) onprog(Math.min(i + BATCH, allSegs.length), allSegs.length);
-  }
-  const badIdx = () => {
-    const b = [];
-    out.forEach((t, gi) => {
-      if (!String(allSegs[gi].text || "").trim()) return;
-      if (!t || foreignScriptOf(t)) b.push(gi);
-    });
-    return b;
-  };
-  let bad = badIdx();
-  for (let round = 0; round < 2 && bad.length; round++) {
-    if (say) say(`⚠️ နိုင်ငံခြားစာ ပါ/ပျက်နေတဲ့ ကြောင်း ${bad.length} ကြောင်း ပြန်ပြန်နေပါတယ်… (အကြိမ် ${round + 1})`);
-    const beforeRound = bad.length;
-    for (const gi of bad) {
-      const t = await askOne(gi);
-      if (t && !foreignScriptOf(t)) out[gi] = t;
-      else if (t && !out[gi]) out[gi] = t;
-    }
-    bad = badIdx();
-    // Round 1 fixed nothing: the failure is systematic, so a second round
-    // would only burn another full set of calls. Report and stop repairing.
-    if (round === 0 && bad.length >= beforeRound) {
-      if (say) say(`❌ အကြိမ် 1 မှာ တစ်ကြောင်းမှ မပြင်နိုင်ပါ — အကြိမ် 2 ကို ကျော်လိုက်ပါပြီ (Gemini error ကို စစ်ပါ)`);
-      break;
-    }
-  }
-  if (bad.length && say) {
-    say(`❌ ကြောင်း ${bad.length} ကြောင်း ဘာသာပြန် မသန့်သေးပါ — TTS မစခင် စစ်ပါ: ` +
-      bad.slice(0, 15).map((gi) => `#${gi + 1}(${out[gi] ? (foreignScriptOf(out[gi]) || "?") : "မရ"})`).join(", ") +
-      (bad.length > 15 ? " …" : ""));
-  }
-  return allSegs.map((s, gi) => ({
-    start: s.start, end: s.end,
-    text: out[gi] !== null ? out[gi] : s.text,
-  }));
-}
 
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
@@ -2414,20 +2178,10 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", "အသံရပါပြီ (" + fmtSize(audioBlob.size) + ") ✅", "ok");
     setStep("audio", "done");
 
-    // If SRT uploaded + dubbing: use SRT directly, skip transcribe/translate
-    const rcStyleVal0 = ($("rcStyle") || {}).value || "story";
-    let useSrtDirect = false;
-    if (rcSrtSegments && rcSrtSegments.length && rcStyleVal0 === "wordbyword") {
-      log("rc", `📄 SRT သုံးမယ် (${rcSrtSegments.length} ကြောင်း) — transcribe/translate skip`, "ok");
-      setStep("transcribe", "done");
-      setStep("script", "done");
-      useSrtDirect = true;
-    }
 
     // ---- step 2: transcribe (chunked if big) ----
     setStep("transcribe", "run");
     const allSegs = [];
-    if (!useSrtDirect) {
     log("rc", "2️⃣ စာသားပြောင်းနေပါတယ် (Groq Whisper)…");
     const CHUNK_MB = 15;
     const sizeMB = audioBlob.size / 1048576;
@@ -2488,13 +2242,6 @@ $("startRecap").addEventListener("click", async () => {
       for (const s of segs) allSegs.push({ start: s.start + start, end: s.end + start, text: s.text });
     }
     await ff.deleteFile("taudio.mp3");
-    } // end if (!useSrtDirect)
-    if (useSrtDirect) {
-      allSegs.length = 0;
-      for (const s of rcSrtSegments) allSegs.push({ start: s.start, end: s.end, text: s.text });
-      $("rcTranscript").value = allSegs.map((s) => "[" + fmtClock(s.start) + "] " + s.text).join("\n").slice(0, 6000);
-      log("rc", `SRT transcript ရပါပြီ (${allSegs.length} ကြောင်း) ✅`, "ok");
-    }
     allSegs.sort((a, b) => a.start - b.start);
     const transcriptText = allSegs.map((s) => "[" + fmtClock(s.start) + "] " + s.text).join("\n");
     $("rcTranscript").value = transcriptText.slice(0, 6000);
@@ -2506,25 +2253,6 @@ $("startRecap").addEventListener("click", async () => {
     const rcStyle = ($("rcStyle") || {}).value || "story";
     const watchMode = ($("rcWatchMode") || {}).value || "frames";
     let segments = null;
-    if (useSrtDirect) {
-      // SRT direct: use allSegs as segments (already translated)
-      segments = allSegs.map((s) => ({ start: s.start, end: s.end, text: s.text }));
-      $("rcScript").value = segments.map((s) => `[${fmtClock(s.start)}-${fmtClock(s.end)}] ${s.text}`).join("\n");
-      log("rc", `SRT script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
-      setStep("script", "done");
-    }
-    if (!segments && rcStyle === "wordbyword") {
-      // Word-by-word dubbing: translate transcript directly, keep original
-      // timing. Strict Burmese-only translation with foreign-script scan +
-      // auto re-translate lives in translateDubSegments (no silent fallback).
-      setProgress("rc", 55, "စာသားတွေ မြန်မာလို ပြန်နေပါတယ်…");
-      log("rc", "🎙️ Word-by-word dubbing — transcript ကို တိုက်ရိုက် ဘာသာပြန်နေပါတယ်…");
-      segments = await translateDubSegments(allSegs,
-        (done, total) => setProgress("rc", 55 + (done / total) * 10, `ဘာသာပြန်နေပါတယ်… (${done}/${total})`),
-        (m) => log("rc", m));
-      log("rc", `dubbing script ရပါပြီ (${segments.length} ကြောင်း) ✅`, "ok");
-      setStep("script", "done");
-    }
     if (!segments && watchMode === "fullvideo") {
       // Full video via Gemini Files API — AI watches the entire video
       try {
@@ -2770,70 +2498,7 @@ $("startRecap").addEventListener("click", async () => {
     // ---- step 5: sync + mux ----
     rcLastRun = { segments, segPieces, baseName, fileName: rcFile.name, fileSize: rcFile.size };
     const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    const isDubbing = (($("rcStyle") || {}).value || "") === "wordbyword";
-    // Dubbing: video-first (output = video duration). Recap: audio-first.
-    if (isDubbing) {
-      setProgress("rc", 90, "🎙️ Dubbing sync (video-first)…");
-      log("rc", "🎙️ Video timing အတိုင်း dubbing လုပ်နေပါတယ်…");
-      const wantFlip = $("rcFlip") && $("rcFlip").checked;
-      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
-      const segsWithAudio = segments.map((s, i) => {
-        const pieces = segPieces[s._i] || segPieces[i] || [];
-        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        const out = {
-          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
-          start: s.start, end: s.end,  // deprecated alias
-          text: s.text, audioBlob,
-          audioDuration: s.audioDuration,
-        };
-        // Preserve genuine source timestamps only — never invent them
-        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
-        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
-        return out;
-      });
-      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
-      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
-      // timestamps are never compared against source duration.
-      {
-        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
-        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
-        if (!v.ok) {
-          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
-          log("rc", msg, "err");
-          throw new Error(msg);
-        }
-      }
-      const useDubRecap = getDubRender() === "recap";
-      if (useDubRecap) log("rc", "🎬 Dub recap render (ffmpeg) — video က အသံနောက် လိုက်, စကားမပြတ်, နောက်ဆုံး 1.3× speedup…");
-      let { blob: finalBlob, ext, duration: recDur, recSec, timeline: dubTimeline } = await (useDubRecap ? ffmpegDubRecap : canvasDubSync)(rcFile, segsWithAudio, {
-        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
-        ...getStyleOpts(),
-        ...getRcDims(),
-        onprog: (p) => setProgress("rc", 90 + p * 9, `Dubbing… ${Math.round(p * 100)}%`),
-        onlog: (m) => log("rc", m),
-      });
-      // ffmpeg output already carries correct duration metadata; the
-      // MediaRecorder duration patch applies to the canvas path only.
-      if (!useDubRecap) { try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); } }
-      let srt = null;
-      try { srt = segmentsToSRT(useDubRecap && dubTimeline ? dubTimeline : segments); }
-      catch (e) {
-        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = null; // Do NOT create file with error message
-      }
-      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
-      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-      $("rcResults").innerHTML = "";
-      const r1 = dlRow(baseName + "_dubbed." + ext, finalBlob);
-      $("rcResults").appendChild(r1.row);
-      const r2 = srtBlob ? dlRow(baseName + "_dubbed.srt", srtBlob) : null;
-      if (r2) $("rcResults").appendChild(r2.row);
-      const r3 = dlRow(baseName + "_script.txt", txtBlob);
-      $("rcResults").appendChild(r3.row);
-      setProgress("rc", 100, "ပြီးပါပြီ ✅");
-      log("rc", "Dubbing ပြီးပါပြီ ✅", "ok");
-      setStep("mux", "done");
-    } else if (useAudioFirst) {
+    if (useAudioFirst) {
       // Canvas audio-first: video adjusts to narration per segment
       setStep("mux", "run");
       setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
