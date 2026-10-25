@@ -130,6 +130,7 @@ export async function canvasExport(videoBlob, opts = {}) {
   // Add audio track
   if (audioEl) {
     const actx = new AudioContext();
+  try { if (actx.state === "suspended") actx.resume().catch(() => {}); } catch (_) {}
     const src = actx.createMediaElementSource(audioEl);
     const dest = actx.createMediaStreamDestination();
     src.connect(dest);
@@ -343,6 +344,7 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   // Audio mixing
   const stream = canvas.captureStream(30);
   const actx = new AudioContext();
+  try { if (actx.state === "suspended") actx.resume().catch(() => {}); } catch (_) {}
   const dest = actx.createMediaStreamDestination();
   for (const s of segData) {
     const src = actx.createMediaElementSource(s.audioEl);
@@ -364,6 +366,8 @@ export async function canvasDubSync(videoBlob, segments, opts = {}) {
   const drawFrame = (t) => {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, width, height);
+    // Contain mode: blurred background like drawScene (else literal black bars)
+    if (_fit === "contain") { try { drawBlurBg(ctx, video, width, height, _blurTmp); } catch (_) {} }
     ctx.save();
     if (flip) { ctx.translate(width, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, dx, dy, dw, dh);
@@ -519,10 +523,12 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
     logoImg = null, logoPos = null, logoShape = "square" } = opts;
-  // PHASE 1 NOTE: segments use outputStart/outputEnd (narration timeline).
-  // sourceStart/sourceEnd are NOT set by current recap modes.
-  // The seek below (video.currentTime = s.start) uses OUTPUT time as source seek
-  // — this is a known Phase 1 limitation, fixed in Phase 3. Do not silently change it here.
+  // Timeline note (verified 2026-10-25): outputStart/outputEnd are rebuilt
+  // below from ACTUAL audio durations, so each segment plays exactly its
+  // narration length. sourceStart/sourceEnd ARE set by SRC scripts and are
+  // used for seeking/loop bounds when present; without them the video
+  // simply plays straight through (no per-segment seek, no freeze — the
+  // freeze branch below only fires when the video itself ends early).
   // Timestamp validation happens in app-v3.js before calling this function.
   // Preload font for canvas
   try {
@@ -599,6 +605,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const stream = canvas.captureStream(30);
   // Mix all audio via Web Audio
   const actx = new AudioContext();
+  try { if (actx.state === "suspended") actx.resume().catch(() => {}); } catch (_) {}
   const dest = actx.createMediaStreamDestination();
   const sources = [];
   for (const s of segData) {
@@ -1032,6 +1039,7 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
   // Recording setup (same shape as Method A)
   const stream = canvas.captureStream(30);
   const actx = new AudioContext();
+  try { if (actx.state === "suspended") actx.resume().catch(() => {}); } catch (_) {}
   const dest = actx.createMediaStreamDestination();
   for (const s of segData) {
     const src = actx.createMediaElementSource(s.audioEl);
