@@ -776,13 +776,6 @@ $("extractAudio").addEventListener("click", async () => {
 // Normalize mux segments: SRC scripts carry sourceStart/sourceEnd only
 // (parseRecapSegmentsStrict) — without this, start/end are undefined and
 // win/rate become NaN downstream. Returns {segments, badCount}.
-function normalizeMuxSegments(segments) {
-  const out = (segments || []).map((s) => ({ ...s,
-    start: (typeof s.start === "number" && isFinite(s.start)) ? s.start : s.sourceStart,
-    end: (typeof s.end === "number" && isFinite(s.end)) ? s.end : s.sourceEnd }));
-  const badCount = out.filter((s) => !(typeof s.start === "number" && isFinite(s.start) && typeof s.end === "number" && isFinite(s.end) && s.end > s.start)).length;
-  return { segments: out, badCount };
-}
 
 // Guard against restoring a previous run's audio onto a different video:
 // the 24h IDB restore only proves a run existed, not that the selected
@@ -795,199 +788,6 @@ function muxRunMatchesFile(run, file) {
   return true;
 }
 
-async function doRecapMux(ff, segments, segPieces, baseName) {
-  const norm = normalizeMuxSegments(segments);
-  if (norm.badCount) throw new Error(`doRecapMux: timestamp မပြည့်တဲ့ segment ${norm.badCount} ခု ရှိပါတယ် — script ကို စစ်ပါ`);
-  segments = norm.segments;
-  // Memory-safe sync: NO adelay+amix (amix buffers all 17 full-timeline inputs
-  // in WASM memory -> OOM on phones). Instead: per-segment atempo/atrim only,
-  // then build the timeline with silence gaps + concat (sequential, low memory).
-  let muxPhase = "init";
-  try {
-    setStep("mux", "run");
-    setProgress("rc", 86, "အသံကို ရုပ်နဲ့ sync လုပ်နေပါတယ်…");
-    muxPhase = "segments";
-    log("rc", "5️⃣ အသံကို timestamp နေရာအတိအကျ ချနေပါတယ်…");
-    const ssegs = segments.map((s, i) => ({ start: s.start, end: s.end, _i: i }))
-      .sort((a, b) => a.start - b.start);
-    const ACtx = new (window.AudioContext || window.webkitAudioContext)();
-    async function mp3Duration(u8, byteLen, segNo) {
-      const copy = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
-      try {
-        const dec = await Promise.race([
-          ACtx.decodeAudioData(copy),
-          new Promise((_, rej) => setTimeout(() => rej(new Error("decode-timeout")), 15000))
-        ]);
-        return dec.duration;
-      } catch (e) {
-        // Fallback: estimate from file size (Edge TTS ~48kbps mono MP3).
-        // decodeAudioData can hang on mobile browsers; don't stall the pipeline.
-        const est = Math.max(0.5, (byteLen * 8) / 48000);
-        log("rc", `⚠️ အပိုင်း ${segNo}: duration တိုင်းမရလို့ ခန့်မှန်းသုံးပါတယ်`, "err");
-        return est;
-      }
-    }
-    const encB = new TextEncoder();
-    // ---- measure durations, then SERVER-SIDE mix (browser FFmpeg can't handle it reliably) ----
-    muxPhase = "servermix";
-    setProgress("rc", 91, "အသံတွေ ပေါင်းနေပါတယ်… (server)");
-    log("rc", "🔗 အသံတွေ server ပေါ်မှာ ပေါင်းနေပါတယ်…");
-    const mixSegs = new Array(ssegs.length);
-    let mixDone = 0;
-    // Bounded concurrency: 2 at a time. Order preserved via index.
-    // Each segment's start/end/rate mapping is unchanged.
-    async function prepareMixSeg(k) {
-      const seg = ssegs[k];
-      const pieces = segPieces[seg._i];
-      // Combine pieces into one blob for duration measurement
-      const blob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-      const buf = await blob.arrayBuffer();
-      const u8 = new Uint8Array(buf);
-      const dur = await mp3Duration(u8, u8.byteLength, k + 1);
-      const win = Math.max(0.5, seg.end - seg.start);
-      let rate = 1;
-      if (dur > win + 0.05) {
-        rate = Math.min(dur / win, 1.3);
-        if (dur / rate > win + 0.05) {
-          log("rc", `⚠️ အပိုင်း ${k + 1}: အသံရှည်လွန်းလို့ ${win.toFixed(1)}s မှာ ဖြတ်လိုက်ပါတယ်`, "err");
-        } else if (rate > 1.001) {
-          log("rc", `အပိုင်း ${k + 1}: ${rate.toFixed(2)}x မြန်လိုက်ပါတယ်`, "ok");
-        }
-      }
-      // base64 for server
-      const b64 = await new Promise((res) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result).split(",")[1]);
-        r.readAsDataURL(blob);
-      });
-      mixSegs[k] = { b64, start: seg.start, end: seg.end, rate };
-      mixDone++;
-      setProgress("rc", 91 + (mixDone / ssegs.length) * 2, `ပြင်ဆင်နေပါတယ်… (${mixDone}/${ssegs.length})`);
-    }
-    {
-      let nextK = 0;
-      const workers = [0, 1].map(async () => {
-        while (true) {
-          const k = nextK++;
-          if (k >= ssegs.length) break;
-          await prepareMixSeg(k);
-        }
-      });
-      await Promise.all(workers);
-    }
-    try { await ACtx.close(); } catch (_) {}
-    // video duration for final pad
-    // video duration for final pad
-    const vdur = await new Promise((res) => {
-      const v = document.createElement("video");
-      v.preload = "metadata";
-      v.onloadedmetadata = () => { const d = v.duration || 0; URL.revokeObjectURL(v.src); res(d); };
-      v.onerror = () => res(0);
-      v.src = URL.createObjectURL(rcFile);
-    });
-    // Send to server for mixing
-    const mixResp = await fetch(TTS_SERVER + "/api/mix", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ segments: mixSegs, videoDur: vdur })
-    });
-    if (!mixResp.ok) {
-      const t = await mixResp.text();
-      throw new Error("server mix failed: " + t.slice(0, 200));
-    }
-    const narrBlob = await mixResp.blob();
-    await ff.writeFile("narr.mp3", await fetchFile(narrBlob));
-
-    // ---- mux with video ----
-    muxPhase = "remux-write";
-    setProgressHandler((p) => setProgress("rc", 94 + p * 6, "video နဲ့ တွဲနေပါတယ်…"));
-    // Diagnostic: verify file readable before FFmpeg write
-    try {
-      const fsz = rcFile ? rcFile.size : 0;
-      console.log(`[remux-write] file: ${rcFile ? (rcFile.name || "?") : "null"} size=${fsz} type=${rcFile ? (rcFile.type || "?") : "?"}`);
-      if (!rcFile || !fsz) throw new Error("video file မရှိတော့ပါ — ပြန်ရွေးပေးပါ");
-      // Warn if file is very large for mobile memory
-      if (fsz > 500 * 1024 * 1024) {
-        log("rc", `⚠️ Video ကြီးလွန်းပါတယ် (${(fsz/1048576).toFixed(0)}MB) — memory မလောက်နိုင်ပါ`, "err");
-      }
-    } catch (de) { console.warn("[remux-write] pre-check:", de.message); }
-    try {
-      await ff.writeFile("input.mp4", await fetchFile(rcFile));
-    } catch (we) {
-      // Provide clear error instead of cryptic Code=-1
-      const msg = `video file FFmpeg ထဲ ရေးမရပါ: ${(we.message || we).toString().slice(0, 150)} (size=${rcFile ? rcFile.size : "?"})`;
-      log("rc", "❌ " + msg, "err");
-      throw new Error(msg);
-    }
-    muxPhase = "remux-exec";
-    await ff.exec(["-i", "input.mp4", "-i", "narr.mp3",
-      "-map", "0:v:0", "-map", "1:a:0",
-      "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
-      "-movflags", "+faststart", "recap.mp4"]);
-    muxPhase = "readout";
-    for (const n of ["input.mp4", "narr.mp3"]) {
-      try { await ff.deleteFile(n); } catch (_) {}
-    }
-    const vdata = await ff.readFile("recap.mp4");
-    const vblob = new Blob([vdata], { type: "video/mp4" });
-    try { await ff.deleteFile("recap.mp4"); } catch (_) {}
-
-    let srt = null;
-    try { srt = segmentsToSRT(segments); }
-    catch (e) { console.warn("SRT failed:", e.message); srt = null; }
-    const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
-    const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-
-    const r1 = dlRow(baseName + "_recap.mp4", vblob); $("rcResults").appendChild(r1.row);
-    if (srtBlob) { const r2 = dlRow(baseName + "_recap.srt", srtBlob); $("rcResults").appendChild(r2.row); }
-    const r3 = dlRow(baseName + "_script.txt", txtBlob); $("rcResults").appendChild(r3.row);
-
-    // Auto-apply selected edits via canvas (unified flow — no separate editor tab)
-    const wantFlip = $("rcFlip") && $("rcFlip").checked;
-    const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
-    if (wantFlip || wantWm) {
-      try {
-        setProgress("rc", 97, "Edit တွေ လုပ်နေပါတယ် (canvas)…");
-        log("rc", "🎨 flip/watermark canvas နဲ့ လုပ်နေပါတယ်…");
-        // Parse SRT for subtitle burn-in
-        const subs = [];
-        const srtLines = srt.split("\n");
-        // (subtitles already in srt string; parse quickly)
-        const { blob: editedBlob, ext, recSec } = await canvasExport(vblob, {
-          flip: wantFlip,
-          watermarkText: wantWm,
-          subtitles: segments,
-          ...getStyleOpts(),
-          ...getRcDims(),
-          onprog: (p) => setProgress("rc", 97 + p * 2, "Edit… " + Math.round(p * 100) + "%"),
-        });
-        const r4 = dlRow(baseName + "_recap_edited." + ext, editedBlob);
-        $("rcResults").appendChild(r4.row);
-        log("rc", "Edit ပြီးပါပြီ ✅", "ok");
-      } catch (e) {
-        log("rc", "Edit မအောင်မြင်ပါ: " + (e.message || e) + " — မူရင်း video ကို သုံးပါ", "err");
-      }
-    }
-
-    rcHandoff = { blob: vblob, name: baseName + "_recap.mp4" };
-
-    const prevWrap = document.createElement("div");
-    prevWrap.className = "hint";
-    prevWrap.textContent = "အသံအစမ်းနားထောင်ရန် (Web Speech): ";
-    segments.forEach((s, i) => {
-      const b = document.createElement("button");
-      b.className = "ghost";
-      b.style.cssText = "padding:6px 10px;min-height:0;font-size:13px;margin:4px 4px 0 0;";
-      b.textContent = "🔊 " + (i + 1);
-      b.onclick = () => previewWithWebSpeech(s.text);
-      prevWrap.appendChild(b);
-    });
-    $("rcResults").appendChild(prevWrap);
-  } catch (e) {
-    log("rc", "❌ sync phase [" + muxPhase + "] မှာ error: " + (e.message || e), "err");
-    throw e;
-  }
-}
 
 // ============================================================
 // TAB 3 — RECAP NOVA
@@ -1958,80 +1758,74 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   try {
     acquireWakeLock().catch(() => {});
     log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
-    const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    if (useAudioFirst) {
-      setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
-      const wantFlip = $("rcFlip") && $("rcFlip").checked;
-      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
-      const segsWithAudio = segments.map((s, i) => {
-        const pieces = segPieces[s._i] || segPieces[i] || [];
-        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        const out = {
-          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
-          start: s.start, end: s.end,  // deprecated alias
-          text: s.text, audioBlob,
-          audioDuration: s.audioDuration,
-        };
-        // Preserve genuine source timestamps only — never invent them
-        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
-        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
-        return out;
-      });
-      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
-      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
-      // timestamps are never compared against source duration.
-      {
-        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
-        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
-        if (!v.ok) {
-          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
-          log("rc", msg, "err");
-          throw new Error(msg);
-        }
-      }
-      const syncMethod = getSyncMethod();
-      if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
-        flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
-        ...getStyleOpts(),
-        ...getRcDims(),
-        onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
-      });
-      // Fix WebM duration metadata (for CapCut/editors)
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      let srt = null;
-      try { srt = await srtFromSegsWithAudio(segsWithAudio, "rc"); }
-      catch (e) {
-        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = null; // Do NOT create file with error message
-      }
-      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
-      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-      $("rcResults").innerHTML = "";
-      // Final validation: ensure output blob is valid before offering download
-      if (!finalBlob || finalBlob.size < 1024) {
-        const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
-        log("rc", "❌ " + msg, "err");
+    setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
+    const wantFlip = $("rcFlip") && $("rcFlip").checked;
+    const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+    const segsWithAudio = segments.map((s, i) => {
+      const pieces = segPieces[s._i] || segPieces[i] || [];
+      const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+      const out = {
+        outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+        start: s.start, end: s.end,  // deprecated alias
+        text: s.text, audioBlob,
+        audioDuration: s.audioDuration,
+      };
+      // Preserve genuine source timestamps only — never invent them
+      if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+      if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+      return out;
+    });
+    // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+    // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+    // timestamps are never compared against source duration.
+    {
+      const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+      const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
+      if (!v.ok) {
+        const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+        log("rc", msg, "err");
         throw new Error(msg);
       }
-      const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
-      $("rcResults").appendChild(r1.row);
-      const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
-      if (r2) $("rcResults").appendChild(r2.row);
-      const r3 = dlRow(baseName + "_script.txt", txtBlob);
-      $("rcResults").appendChild(r3.row);
-      setProgress("rc", 100, "ပြီးပါပြီ ✅");
-      // Log actual vs target (do NOT claim target achieved)
-      try {
-        const actualMin = (recSec || recDur || 0) / 60;
-        log("rc", `📊 Export: ${actualMin.toFixed(1)} မိနစ် (actual)`, actualMin > 0 ? "ok" : "err");
-      } catch (_) {}
-      log("rc", "Sync ပြီးပါပြီ ✅", "ok");
-      setStep("mux", "done");
-    } else {
-      const ff2 = await ensureFFmpeg((m, c) => log("rc", m, c));
-      await doRecapMux(ff2, segments, segPieces, baseName);
     }
+    const syncMethod = getSyncMethod();
+    if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+    let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
+      flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
+      ...getStyleOpts(),
+      ...getRcDims(),
+      onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
+    });
+    // Fix WebM duration metadata (for CapCut/editors)
+    try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+    let srt = null;
+    try { srt = await srtFromSegsWithAudio(segsWithAudio, "rc"); }
+    catch (e) {
+      log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+      srt = null; // Do NOT create file with error message
+    }
+    const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
+    const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+    $("rcResults").innerHTML = "";
+    // Final validation: ensure output blob is valid before offering download
+    if (!finalBlob || finalBlob.size < 1024) {
+      const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
+      log("rc", "❌ " + msg, "err");
+      throw new Error(msg);
+    }
+    const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
+    $("rcResults").appendChild(r1.row);
+    const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
+    if (r2) $("rcResults").appendChild(r2.row);
+    const r3 = dlRow(baseName + "_script.txt", txtBlob);
+    $("rcResults").appendChild(r3.row);
+    setProgress("rc", 100, "ပြီးပါပြီ ✅");
+    // Log actual vs target (do NOT claim target achieved)
+    try {
+      const actualMin = (recSec || recDur || 0) / 60;
+      log("rc", `📊 Export: ${actualMin.toFixed(1)} မိနစ် (actual)`, actualMin > 0 ? "ok" : "err");
+    } catch (_) {}
+    log("rc", "Sync ပြီးပါပြီ ✅", "ok");
+    setStep("mux", "done");
   } catch (e) {
     log("rc", "အမှား: " + (e.message || e), "err");
     setStep("mux", "fail");
@@ -2505,87 +2299,82 @@ $("startRecap").addEventListener("click", async () => {
       console.warn("idb save failed", e);
     }
 
-    // ---- step 5: sync + mux ----
+    // ---- step 5: sync ----
     rcLastRun = { segments, segPieces, baseName, fileName: rcFile.name, fileSize: rcFile.size };
-    const useAudioFirst = $("rcAudioFirst") && $("rcAudioFirst").checked;
-    if (useAudioFirst) {
-      // Canvas audio-first: video adjusts to narration per segment
-      setStep("mux", "run");
-      setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
-      log("rc", "5️⃣ Video ကို အသံနဲ့ကိုက်အောင် ညှိနေပါတယ်… 🎯");
-      const wantFlip = $("rcFlip") && $("rcFlip").checked;
-      const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
-      // Build segments with audio blobs
-      const segsWithAudio = segments.map((s, i) => {
-        const pieces = segPieces[s._i] || segPieces[i] || [];
-        const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
-        const out = {
-          outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
-          start: s.start, end: s.end,  // deprecated alias
-          text: s.text, audioBlob,
-          audioDuration: s.audioDuration,
-        };
-        // Preserve genuine source timestamps only — never invent them
-        if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
-        if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
-        return out;
-      });
-      // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
-      // but ONLY applies to genuine sourceStart/sourceEnd fields — output
-      // timestamps are never compared against source duration.
-      {
-        const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
-        const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
-        if (!v.ok) {
-          const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
-          log("rc", msg, "err");
-          throw new Error(msg);
-        }
-      }
-      const syncMethod = getSyncMethod();
-      if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
-      let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
-        flip: wantFlip,
-        watermarkText: wantWm,
-        blurRegions: rcBlurRegions,
-        ...getStyleOpts(),
-        ...getRcDims(),
-        onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
-      });
-      try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
-      // SRT + script files
-      let srt = null;
-      try { srt = await srtFromSegsWithAudio(segsWithAudio, "rc"); }
-      catch (e) {
-        log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
-        srt = null; // Do NOT create file with error message
-      }
-      const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
-      const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
-      // Final validation: ensure output blob is valid before offering download
-      if (!finalBlob || finalBlob.size < 1024) {
-        const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
-        log("rc", "❌ " + msg, "err");
+    // Canvas audio-first: video adjusts to narration per segment
+    setStep("mux", "run");
+    setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
+    log("rc", "5️⃣ Video ကို အသံနဲ့ကိုက်အောင် ညှိနေပါတယ်… 🎯");
+    const wantFlip = $("rcFlip") && $("rcFlip").checked;
+    const wantWm = ($("rcWatermark") && $("rcWatermark").value.trim()) || "";
+    // Build segments with audio blobs
+    const segsWithAudio = segments.map((s, i) => {
+      const pieces = segPieces[s._i] || segPieces[i] || [];
+      const audioBlob = pieces.length === 1 ? pieces[0] : new Blob(pieces, { type: "audio/mpeg" });
+      const out = {
+        outputStart: s.outputStart ?? s.start, outputEnd: s.outputEnd ?? s.end,
+        start: s.start, end: s.end,  // deprecated alias
+        text: s.text, audioBlob,
+        audioDuration: s.audioDuration,
+      };
+      // Preserve genuine source timestamps only — never invent them
+      if (typeof s.sourceStart === "number" && isFinite(s.sourceStart)) out.sourceStart = s.sourceStart;
+      if (typeof s.sourceEnd === "number" && isFinite(s.sourceEnd)) out.sourceEnd = s.sourceEnd;
+      return out;
+    });
+    // PHASE 1 Gap-3: Validate before export. sourceDuration is passed
+    // but ONLY applies to genuine sourceStart/sourceEnd fields — output
+    // timestamps are never compared against source duration.
+    {
+      const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+      const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
+      if (!v.ok) {
+        const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
+        log("rc", msg, "err");
         throw new Error(msg);
       }
-      const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
-      $("rcResults").appendChild(r1.row);
-      const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
-      if (r2) $("rcResults").appendChild(r2.row);
-      const r3 = dlRow(baseName + "_script.txt", txtBlob);
-      $("rcResults").appendChild(r3.row);
-      setProgress("rc", 100, "ပြီးပါပြီ ✅");
-      log("rc", "Audio-first sync ပြီးပါပြီ ✅", "ok");
-      setStep("mux", "done");
-    } else {
-      await doRecapMux(ff, segments, segPieces, baseName);
     }
+    const syncMethod = getSyncMethod();
+    if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+    let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
+      flip: wantFlip,
+      watermarkText: wantWm,
+      blurRegions: rcBlurRegions,
+      ...getStyleOpts(),
+      ...getRcDims(),
+      onprog: (p, si, n) => setProgress("rc", 90 + p * 9, `Sync… segment ${si + 1}/${n}`),
+    });
+    try { finalBlob = await fixDuration(finalBlob, ext, recSec); } catch (e) { console.warn("duration fix failed", e); }
+    // SRT + script files
+    let srt = null;
+    try { srt = await srtFromSegsWithAudio(segsWithAudio, "rc"); }
+    catch (e) {
+      log("rc", `⚠️ SRT ထုတ်မရပါ: ${e.message}`, "err");
+      srt = null; // Do NOT create file with error message
+    }
+    const srtBlob = srt ? new Blob([srt], { type: "text/plain" }) : null;
+    const txtBlob = new Blob([$("rcScript").value], { type: "text/plain" });
+    // Final validation: ensure output blob is valid before offering download
+    if (!finalBlob || finalBlob.size < 1024) {
+      const msg = `Export failed: output file too small (${finalBlob ? finalBlob.size : 0} bytes)`;
+      log("rc", "❌ " + msg, "err");
+      throw new Error(msg);
+    }
+    const r1 = dlRow(baseName + "_recap_sync." + ext, finalBlob);
+    $("rcResults").appendChild(r1.row);
+    const r2 = srtBlob ? dlRow(baseName + "_recap.srt", srtBlob) : null;
+    if (r2) $("rcResults").appendChild(r2.row);
+    const r3 = dlRow(baseName + "_script.txt", txtBlob);
+    $("rcResults").appendChild(r3.row);
+    setProgress("rc", 100, "ပြီးပါပြီ ✅");
+    log("rc", "Audio-first sync ပြီးပါပြီ ✅", "ok");
+    setStep("mux", "done");
   } catch (e) {
     log("rc", "အမှား: " + (e.message || e), "err");
     setProgress("rc", 0, "");
     document.querySelectorAll("#rcSteps li.run").forEach((li) => { li.className = "fail"; });
-    // No retry button here on purpose: it used to route every failure to
-    // doRecapMux (a different engine, broken for SRC scripts). The main
+    // No retry button here on purpose: the old retry routed every failure
+    // to a different engine (removed — it produced out-of-sync output). The main
     // "🔄 Sync ပြန်လုပ်" button re-runs the saved run correctly.
     if (rcLastRun && rcLastRun.segPieces) {
       log("rc", "💡 သိမ်းထားတဲ့ အသံနဲ့ ပြန်လုပ်ချင်ရင် '🔄 Sync ပြန်လုပ်' ခလုတ်ကို နှိပ်ပါ (TTS ပြန်မလုပ်ဘူး)", "ok");

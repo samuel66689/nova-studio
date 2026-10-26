@@ -6,7 +6,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261023-cors4"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261027-nomix"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 // CORS: echo the request Origin only when it is one of our own sites.
 // Any other origin gets the production default, which browsers will
@@ -45,47 +45,6 @@ function rateLimited(ip) {
   return arr.length > 60;
 }
 
-const MIX_PY_MIX = `
-import json, sys, os, subprocess, tempfile, base64
-import imageio_ffmpeg
-
-def main():
-    d = json.load(sys.stdin)
-    segs = d["segments"]  # [{b64, start, end, rate}]
-    video_dur = float(d.get("videoDur", 0))
-    tmpd = tempfile.mkdtemp(prefix="mix")
-    inputs = []
-    fc_parts = []
-    for i, s in enumerate(segs):
-        fp = os.path.join(tmpd, f"s{i}.mp3")
-        with open(fp, "wb") as f:
-            f.write(base64.b64decode(s["b64"]))
-        inputs += ["-i", fp]
-        # Simple: atempo (if needed), then sequential concat.
-        # No per-segment timestamp placement — the narration plays as one
-        # continuous voiceover (Automation Nova approach: single voice file).
-        # This avoids the WASM memory wall entirely.
-        chain = f"[{i}:a]"
-        rate = float(s.get("rate") or 1)
-        if rate > 1.001:
-            chain += f"atempo={rate:.3f},"
-        chain += f"aformat=sample_rates=44100:channel_layouts=stereo[a{i}];"
-        fc_parts.append(chain)
-    mix_labels = "".join(f"[a{i}]" for i in range(len(segs)))
-    fc = "".join(fc_parts) + f"{mix_labels}concat=n={len(segs)}:v=0:a=1"
-    if video_dur > 0:
-        fc += f",apad=whole_dur={video_dur:.2f}"
-    out = os.path.join(tmpd, "narr.mp3")
-    exe = imageio_ffmpeg.get_ffmpeg_exe()
-    cmd = [exe, "-y"] + inputs + ["-filter_complex", fc, "-c:a", "libmp3lame", "-b:a", "128k", out]
-    r = subprocess.run(cmd, capture_output=True, timeout=120)
-    if r.returncode != 0 or not os.path.exists(out):
-        sys.stderr.write(r.stderr.decode(errors="ignore")[-500:])
-        sys.exit(1)
-    sys.stdout.buffer.write(open(out, "rb").read())
-
-main()
-`;
 
 const PY = `
 import asyncio, json, sys
@@ -154,70 +113,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && req.url === "/api/version") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ version: BACKEND_VERSION, endpoints: ["/api/gemini", "/api/gemini-upload", "/api/tts", "/api/mix"] }));
+    res.end(JSON.stringify({ version: BACKEND_VERSION, endpoints: ["/api/gemini", "/api/gemini-upload", "/api/tts"] }));
     return;
   }
 
 
-  if (req.method === "POST" && req.url === "/api/mix") {
-    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
-      || req.socket.remoteAddress || "unknown";
-    if (rateLimited(ip)) { res.writeHead(429, { "Content-Type": "text/plain" }); res.end("rate limited"); return; }
-    let body = "";
-    let mixRejected = false;
-    req.on("data", (c) => {
-      if (mixRejected) return;
-      body += c;
-      if (body.length > 50 * 1024 * 1024) {
-        mixRejected = true;
-        // Clean 413 first (like /api/gemini): bare req.destroy() would surface
-        // as ECONNRESET on the client with no usable error.
-        if (!res.writableEnded) {
-          res.writeHead(413, { "Content-Type": "text/plain" });
-          res.end("request too large (max 50MB)");
-        }
-        req.destroy();
-      }
-    });
-    req.on("end", async () => {
-      if (mixRejected) return; // already answered 413
-      try {
-        const data = JSON.parse(body || "{}");
-        const segs = data.segments || [];
-        if (!segs.length) { res.writeHead(400); res.end("no segments"); return; }
-        const audio = await new Promise((resolve, reject) => {
-          const p = spawn("python3", ["-c", MIX_PY_MIX], { timeout: 150000 });
-          const out = [], err = [];
-          const timer = setTimeout(() => {
-            try { p.kill("SIGKILL"); } catch (_) {}
-            reject(new Error("mix timeout"));
-          }, 150000);
-          p.stdout.on("data", (d) => out.push(d));
-          p.stderr.on("data", (d) => err.push(d));
-          p.on("error", (e) => { clearTimeout(timer); reject(e); });
-          p.on("close", (code) => {
-            clearTimeout(timer);
-            if (code !== 0) {
-              const msg = Buffer.concat(err).toString().slice(0, 500);
-              return reject(new Error("mix failed: " + msg));
-            }
-            resolve(Buffer.concat(out));
-          });
-          p.stdin.write(JSON.stringify({ segments: segs, videoDur: data.videoDur || 0 }));
-          p.stdin.end();
-        });
-        res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
-        res.end(audio);
-      } catch (e) {
-        // Generic message to the client: e.message may contain ffmpeg stderr
-        // with server-internal /tmp paths — detail stays in the server log.
-        console.error("mix error:", (e.message || e).toString().slice(0, 500));
-        res.writeHead(500, { "Content-Type": "text/plain" });
-        res.end("mix failed");
-      }
-    });
-    return;
-  }
 
   if (req.method === "POST" && req.url === "/api/tts") {
     const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim()
