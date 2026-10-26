@@ -1216,7 +1216,6 @@ function collectPresetSettings() {
     style_: ($("rcStyle") || {}).value || "",
     lang: ($("rcLang") || {}).value || "",
     flip: ($("rcFlip") || {}).checked || false,
-    syncMethod: getSyncMethod(),
   };
 }
 
@@ -1240,7 +1239,9 @@ async function applyPresetSettings(settings) {
   set("rcStyle", settings.style_);
   set("rcLang", settings.lang);
   setChk("rcFlip", settings.flip);
-  if (settings.syncMethod !== undefined && settings.syncMethod !== null) setSyncMethod(settings.syncMethod);
+  // NOTE: presets intentionally do NOT touch the sync method — it is a global
+  // preference (B default, only an explicit A stays A). Old presets carrying
+  // "A" must not flip the user back to A on apply.
   // Logo position
   if (settings.logoPos) {
     rcLogoPos = { ...settings.logoPos };
