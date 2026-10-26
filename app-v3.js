@@ -915,7 +915,7 @@ function rcInitLogoDrag() {
     lel.style.backgroundImage = `url(${$("rcLogoPrev").src})`;
     lel.style.backgroundSize = "contain";
     lel.style.backgroundRepeat = "no-repeat";
-    const shape = ($("rcLogoShape") || {}).value || "square";
+    const shape = ($("rcLogoShape") || {}).value || "circle";
     lel.style.borderRadius = shape === "circle" ? "50%" : "0";
     // No overflow:hidden: the resize handle sits OUTSIDE the logo box and must stay visible.
     // (The logo background is clipped by border-radius on its own.)
@@ -960,7 +960,7 @@ function rcInitLogoDrag() {
 $("rcLogoShape")?.addEventListener("change", () => {
   const lel = document.getElementById("rcLogoDrag");
   if (lel) {
-    const shape = ($("rcLogoShape") || {}).value || "square";
+    const shape = ($("rcLogoShape") || {}).value || "circle";
     lel.style.borderRadius = shape === "circle" ? "50%" : "0";
   }
 });
@@ -1018,7 +1018,7 @@ function getStyleOpts() {
     subPos: ($("rcSubPos") || {}).value || "bottom",
     logoImg: rcLogoImg,
     logoPos: rcLogoImg ? rcLogoPos : null,
-    logoShape: ($("rcLogoShape") || {}).value || "square",
+    logoShape: ($("rcLogoShape") || {}).value || "circle",
   };
 }
 

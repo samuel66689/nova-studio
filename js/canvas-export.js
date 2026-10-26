@@ -81,7 +81,7 @@ export async function canvasExport(videoBlob, opts = {}) {
     blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
-    logoImg = null, logoPos = null, logoShape = "square",
+    logoImg = null, logoPos = null, logoShape = "circle",
   } = opts;
 
   const url = URL.createObjectURL(videoBlob);
@@ -367,7 +367,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
-    logoImg = null, logoPos = null, logoShape = "square" } = opts;
+    logoImg = null, logoPos = null, logoShape = "circle" } = opts;
   // Timeline note (verified 2026-10-25): outputStart/outputEnd are rebuilt
   // below from ACTUAL audio durations, so each segment plays exactly its
   // narration length. sourceStart/sourceEnd ARE set by SRC scripts and are
@@ -796,7 +796,7 @@ export async function canvasRecapSyncB(videoBlob, segments, opts = {}) {
   const { flip = false, watermarkText = "", width = 720, height = 1280, onprog = null, blurRegions = [],
     subOn = true, subColor = "#ffffff", subSize = 28, subFont = "Aka07",
     shadeColor = "#000000", shadeThick = 4, subPos = "onBlur",
-    logoImg = null, logoPos = null, logoShape = "square" } = opts;
+    logoImg = null, logoPos = null, logoShape = "circle" } = opts;
   try {
     await document.fonts.load(`bold ${subSize}px "${subFont}"`);
     await document.fonts.ready;
