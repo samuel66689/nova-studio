@@ -1039,7 +1039,7 @@ function getDurationTarget() {
   let pct = 50;
   if (pctEl) {
     const v = parseInt(pctEl.value, 10);
-    if ([10, 20, 30, 50, 80].includes(v)) pct = v;
+    if ([10, 20, 30, 50, 80, 100].includes(v)) pct = v;
   }
   const srcMin = (typeof rcFile !== "undefined" && rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
   const targetMin = Math.max(1, Math.round(srcMin * pct / 100));
