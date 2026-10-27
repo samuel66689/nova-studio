@@ -15,11 +15,10 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcRatio")?.addEventListener("change", () => {
     rcApplyLayout();
-    updateDurationHint();
     alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
-  $("rcRes")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
-  $("rcFit")?.addEventListener("change", () => { rcApplyLayout(); updateDurationHint(); });
+  $("rcRes")?.addEventListener("change", () => { rcApplyLayout(); });
+  $("rcFit")?.addEventListener("change", () => { rcApplyLayout(); });
   const smEl = $("rcSyncMethod");
   if (smEl) {
     smEl.value = getSyncMethod();
@@ -1046,14 +1045,6 @@ function getDurationTarget() {
   return { pct, targetMin, srcMin };
 }
 
-function updateDurationHint() {
-  try {
-    const hint = $("rcDurationHint");
-    if (!hint) return;
-    const { pct, targetMin, srcMin } = getDurationTarget();
-    hint.textContent = `≈ ${targetMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်၏ ${pct}%) — ခန့်မှန်းခြေသာ`;
-  } catch (_) {}
-}
 /** Update preview wrapper to match output aspect */
 function rcApplyLayout() {
   const { width, height } = getRcDims();
