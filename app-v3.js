@@ -2217,6 +2217,7 @@ $("startRecap").addEventListener("click", async () => {
     let srvTtsFailStreak = 0;
     let browserFailStreak = 0; // consecutive failed browser-Edge attempts (fail-fast signal)
     let srvTtsDisabled = false;
+    let srvThrottleSeen = false; // server 429/403 on this attempt (ttsPiece swallows e1, so flag it here)
     async function ttsPiece(text) {
       if (!srvTtsDisabled) {
         try {
@@ -2224,6 +2225,7 @@ $("startRecap").addEventListener("click", async () => {
           srvTtsFailStreak = 0;
           return b;
         } catch (e1) {
+          if (e1 && e1.throttle) srvThrottleSeen = true;
           srvTtsFailStreak++;
           if (srvTtsFailStreak >= 3) {
             srvTtsDisabled = true;
@@ -2267,12 +2269,14 @@ $("startRecap").addEventListener("click", async () => {
               if (hit) { b = hit; terr = null; break; }
             }
             b = await ttsPiece(pc);
+            if (srvThrottleSeen) { sawThrottle = true; srvThrottleSeen = false; }
             if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
             terr = null;
             break;
           } catch (e) {
             terr = e;
             if (e && e.throttle) sawThrottle = true;
+            if (srvThrottleSeen) { sawThrottle = true; srvThrottleSeen = false; }
             log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/${maxAttempts}) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
             await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt - 1) + Math.random() * 2000));
           }
