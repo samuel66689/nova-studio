@@ -5,7 +5,7 @@
 // Usage: TTS_URL=https://nova-tts.onrender.com node canary.js
 // Exit 0 = OK, exit 1 = FAIL. Run only after /api/version shows the new build.
 const TTS_URL = (process.env.TTS_URL || "https://nova-tts.onrender.com").replace(/\/$/, "");
-const TEXT = "မင်္ဂလာပါ";
+const TEXT = "မင်္ဂလာပါ " + Date.now(); // unique per run: call 1 must be a true miss (live synthesis), not a warm-cache hit
 const VOICE = "my-MM-ThihaNeural";
 async function post(text) {
   const ctrl = new AbortController();
