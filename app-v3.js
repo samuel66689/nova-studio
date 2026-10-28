@@ -281,7 +281,11 @@ async function serverEdgeTTS(text, voice) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, voice }),
     });
-    if (!res.ok) throw new Error("TTS server error " + res.status);
+    if (!res.ok) {
+      const err = new Error("TTS server error " + res.status);
+      if (res.status === 429 || res.status === 403) err.throttle = true;
+      throw err;
+    }
     const buf = await res.arrayBuffer();
     if (!buf.byteLength) throw new Error("TTS server: \u1021\u101E\u1036\u1016\u102D\u102F\u1004\u1039 \u1017\u101C\u102C");
     return new Blob([buf], { type: "audio/mpeg" });
@@ -2151,6 +2155,61 @@ $("startRecap").addEventListener("click", async () => {
       }
     } catch (e) { log("rc", "📓 Memory error: " + (e.message || e), "err"); }
 
+    // ---- TTS piece cache (IndexedDB, its own DB — recap presets untouched) ----
+    // Key: voice + rate + exact text. The cache can never break TTS: every
+    // cache op is guarded, and a miss or error just falls through to a request.
+    const TTS_CACHE_DB = "nova-tts-cache";
+    const TTS_CACHE_STORE = "pieces";
+    const TTS_CACHE_MAX_PIECES = 1000;
+    const TTS_CACHE_RATE = "+0%"; // server + browser paths both synthesize at +0%
+    let ttsCacheDbPromise = null;
+    function ttsCacheDb() {
+      if (ttsCacheDbPromise) return ttsCacheDbPromise;
+      ttsCacheDbPromise = new Promise((resolve) => {
+        try {
+          const req = indexedDB.open(TTS_CACHE_DB, 1);
+          req.onupgradeneeded = () => {
+            try { req.result.createObjectStore(TTS_CACHE_STORE); } catch (_) {}
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(null);
+        } catch (_) { resolve(null); }
+      });
+      return ttsCacheDbPromise;
+    }
+    function ttsCacheKey(voice, text) { return voice + "|" + TTS_CACHE_RATE + "|" + text; }
+    async function ttsCacheGet(voice, text) {
+      try {
+        const db = await ttsCacheDb();
+        if (!db) return null;
+        return await new Promise((resolve) => {
+          try {
+            const tx = db.transaction(TTS_CACHE_STORE, "readonly");
+            const r = tx.objectStore(TTS_CACHE_STORE).get(ttsCacheKey(voice, text));
+            r.onsuccess = () => resolve(r.result instanceof Blob && r.result.size > 0 ? r.result : null);
+            r.onerror = () => resolve(null);
+          } catch (_) { resolve(null); }
+        });
+      } catch (_) { return null; }
+    }
+    function ttsCachePut(voice, text, blob) {
+      // Fire-and-forget: caching must never slow down or break the run.
+      try {
+        if (!blob || blob.size === 0) return;
+        ttsCacheDb().then((db) => {
+          if (!db) return;
+          try {
+            const tx = db.transaction(TTS_CACHE_STORE, "readwrite");
+            const store = tx.objectStore(TTS_CACHE_STORE);
+            const countReq = store.count();
+            countReq.onsuccess = () => {
+              try { if (countReq.result < TTS_CACHE_MAX_PIECES) store.put(blob, ttsCacheKey(voice, text)); } catch (_) {}
+            };
+          } catch (_) {}
+        }).catch(() => {});
+      } catch (_) {}
+    }
+
     // ---- step 4: TTS per segment ----
     setStep("tts", "run");
     // Circuit breaker: if the TTS server fails 3 times in a row, stop paying
@@ -2193,6 +2252,7 @@ $("startRecap").addEventListener("click", async () => {
     async function processTtsSegment(i) {
       const seg = segments[i];
       const pieces = splitLongText(seg.text, 700);
+      let sawThrottle = false;
       for (const pc of pieces) {
         let b = null, terr = null;
         // Fail fast in a death spiral: once the server is gone and Edge
@@ -2200,20 +2260,29 @@ $("startRecap").addEventListener("click", async () => {
         const maxAttempts = (srvTtsDisabled && browserFailStreak >= 4) ? 1 : 3;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
+            // Cache first (exact voice+rate+text): a hit skips the network
+            // entirely, so re-runs, Sync-only and one-line fixes cost 0 requests.
+            if (pc.trim()) {
+              const hit = await ttsCacheGet(voice, pc);
+              if (hit) { b = hit; terr = null; break; }
+            }
             b = await ttsPiece(pc);
             if (b.size === 0) throw new Error("အသံဖိုင် ဗလာ ဖြစ်နေပါတယ်");
             terr = null;
             break;
           } catch (e) {
             terr = e;
+            if (e && e.throttle) sawThrottle = true;
             log("rc", `အပိုင်း ${i + 1} TTS (${attempt}/${maxAttempts}) မရပါ — ပြန်စမ်းနေပါတယ်…`, "err");
-            await new Promise((r) => setTimeout(r, 2000 * attempt));
+            await new Promise((r) => setTimeout(r, 2000 * Math.pow(2, attempt - 1) + Math.random() * 2000));
           }
         }
         if (!b || b.size === 0) {
           if (srvTtsDisabled) throw new Error("browser Edge TTS ဆက်တိုက် မရပါ — internet/VPN စစ်ပြီး ခဏစောင့်ပြီးမှ ပြန်စမ်းပါ" + (terr && terr.message ? ` (${terr.message})` : ""));
           throw terr || new Error("TTS မအောင်မြင်ပါ");
         }
+        // Fire-and-forget: caching must never slow down or break the run.
+        if (pc.trim()) ttsCachePut(voice, pc, b);
         segPieces[i].push(b);
       }
       ttsDone++;
@@ -2222,26 +2291,43 @@ $("startRecap").addEventListener("click", async () => {
       if (ttsDone % 5 === 0 || ttsDone === segments.length) {
         log("rc", `အသံ ${ttsDone}/${segments.length} ပြီးပါပြီ`, "ok");
       }
+      return sawThrottle;
     }
     {
       let nextIdx = 0;
-      const workers = [0, 1].map(async () => {
-        while (true) {
-          if (ttsFailed) break;
-          const i = nextIdx++;
-          if (i >= segments.length) break;
-          try {
-            await processTtsSegment(i);
-          } catch (e) {
-            if (!ttsFailed) {
-              ttsFailed = { index: i, text: segments[i].text, error: e };
-              log("rc", `❌ အပိုင်း ${i + 1} TTS မအောင်မြင်ပါ: ${e.message}`, "err");
-            }
-            break;
+      // Adaptive concurrency: start at 2, +1 after 6 clean segments (max 4),
+      // halve on any throttle (server 429/403) seen during a segment.
+      // Order is still preserved via index; a failed segment still stops the run.
+      let ttsLimit = 2, ttsOkStreak = 0;
+      const TTS_LIMIT_MAX = 4, TTS_UP_EVERY = 6;
+      const inflight = new Set();
+      const launch = () => {
+        if (ttsFailed) return;
+        const i = nextIdx++;
+        if (i >= segments.length) return;
+        const p = processTtsSegment(i).then((throttled) => {
+          if (throttled) {
+            const old = ttsLimit;
+            ttsLimit = Math.max(1, Math.floor(ttsLimit / 2));
+            ttsOkStreak = 0;
+            if (ttsLimit !== old) log("rc", `⚠️ TTS နှေးသွားလို့ တစ်ပြိုင်တည်း လုပ်တာ ${old} → ${ttsLimit} လျှော့လိုက်ပါတယ်`, "err");
+          } else {
+            ttsOkStreak++;
+            if (ttsOkStreak >= TTS_UP_EVERY && ttsLimit < TTS_LIMIT_MAX) { ttsLimit++; ttsOkStreak = 0; }
           }
-        }
-      });
-      await Promise.all(workers);
+        }).catch((e) => {
+          if (!ttsFailed) {
+            ttsFailed = { index: i, text: segments[i].text, error: e };
+            log("rc", `❌ အပိုင်း ${i + 1} TTS မအောင်မြင်ပါ: ${e.message}`, "err");
+          }
+        }).finally(() => { inflight.delete(p); });
+        inflight.add(p);
+      };
+      while (nextIdx < segments.length && !ttsFailed) {
+        while (inflight.size < ttsLimit && nextIdx < segments.length && !ttsFailed) launch();
+        if (inflight.size > 0) await Promise.race(inflight);
+      }
+      await Promise.all(inflight);
     }
     if (ttsFailed) {
       setStep("tts", "fail");
