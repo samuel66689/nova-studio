@@ -1,2 +1,2 @@
-edge-tts>=7.2
+edge-tts==7.3.0
 imageio-ffmpeg>=0.4.9

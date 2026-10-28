@@ -6,7 +6,7 @@ const { spawn } = require("child_process");
 const http = require("http");
 
 const PORT = process.env.PORT || 3000;
-const BACKEND_VERSION = "20261027-nomix"; // bump on each deploy for verification
+const BACKEND_VERSION = "20261029-ttscache"; // bump on each deploy for verification
 const ORIGIN = process.env.ALLOWED_ORIGIN || "https://nova-studio-qfco.onrender.com";
 // CORS: echo the request Origin only when it is one of our own sites.
 // Any other origin gets the production default, which browsers will
@@ -45,6 +45,32 @@ function rateLimited(ip) {
   return arr.length > 60;
 }
 
+
+
+// --- TTS audio cache (LRU): identical voice+text skips the Microsoft call ---
+// Bounded (200 entries / 30MB) so the free instance can't OOM. Cache hits
+// still pass the rate limiter above (limiter untouched); they just skip
+// the python spawn + Microsoft request.
+const TTS_CACHE_MAX_ENTRIES = 200;
+const TTS_CACHE_MAX_BYTES = 30 * 1024 * 1024;
+const ttsCache = new Map(); // key -> Buffer; insertion order = LRU (re-set on hit)
+let ttsCacheBytes = 0;
+function ttsCacheGet(key) {
+  const b = ttsCache.get(key);
+  if (b === undefined) return null;
+  ttsCache.delete(key); ttsCache.set(key, b); // mark recently used
+  return b;
+}
+function ttsCachePut(key, buf) {
+  if (!buf || !buf.length) return;
+  if (ttsCache.has(key)) { ttsCacheBytes -= ttsCache.get(key).length; ttsCache.delete(key); }
+  ttsCache.set(key, buf); ttsCacheBytes += buf.length;
+  while ((ttsCache.size > TTS_CACHE_MAX_ENTRIES || ttsCacheBytes > TTS_CACHE_MAX_BYTES) && ttsCache.size > 1) {
+    const oldest = ttsCache.keys().next().value;
+    ttsCacheBytes -= ttsCache.get(oldest).length;
+    ttsCache.delete(oldest);
+  }
+}
 
 const PY = `
 import asyncio, json, sys
@@ -145,9 +171,17 @@ const server = http.createServer(async (req, res) => {
         const { text, voice } = JSON.parse(body || "{}");
         if (!text || !String(text).trim()) { res.writeHead(400); res.end("empty text"); return; }
         const v = ALLOWED_VOICES.has(voice) ? voice : "my-MM-ThihaNeural";
+        const cacheKey = v + "|+0%|" + String(text);
+        const cached = ttsCacheGet(cacheKey);
+        if (cached) {
+          res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": cached.length, "x-tts-cache": "hit" });
+          res.end(cached);
+          return;
+        }
         const audio = await synth(String(text), v);
         if (!audio.length) { res.writeHead(502); res.end("empty audio"); return; }
-        res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
+        ttsCachePut(cacheKey, audio);
+        res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length, "x-tts-cache": "miss" });
         res.end(audio);
       } catch (e) {
         const msg = (e.message || e).toString().slice(0, 300);

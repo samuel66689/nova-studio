@@ -1,1 +1,1 @@
-{"dependencies":{"ws":"^8.18.0"},"description":"Server-side Edge TTS proxy for Sam's Studio (VPN-proof, native Burmese voices)","engines":{"node":">=18"},"main":"server.js","name":"nova-tts","private":true,"scripts":{"start":"node server.js"},"version":"1.0.0"}
+{"dependencies": {"ws": "^8.18.0"}, "description": "Server-side Edge TTS proxy for Sam's Studio (VPN-proof, native Burmese voices)", "engines": {"node": ">=18"}, "main": "server.js", "name": "nova-tts", "private": true, "scripts": {"start": "node server.js", "canary": "node canary.js"}, "version": "1.0.0"}
