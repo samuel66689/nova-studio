@@ -1637,7 +1637,7 @@ async function checkStorageQuota() {
 /** Sync method selection for the audio-first (canvas) recap path.
  * "B" = Audio Master Timeline (default). "A" = current production sync.
  * Persisted in localStorage; only an explicit "A" stays "A", invalid/missing -> "B".
- * The mux fallback is unaffected. */
+ * Trial note: mux path was removed Oct 27; this comment was stale in main. */
 const SYNC_METHOD_KEY = "nova_sync_method";
 function normalizeSyncMethod(v) { return v === "A" ? "A" : "B"; }
 function getSyncMethod() {
@@ -1784,7 +1784,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
       }
     }
     const syncMethod = getSyncMethod();
-    if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+    if (syncMethod === "B") log("rc", "Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
     let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
       flip: wantFlip, watermarkText: wantWm, blurRegions: rcBlurRegions,
       ...getStyleOpts(),
@@ -2417,7 +2417,7 @@ $("startRecap").addEventListener("click", async () => {
       }
     }
     const syncMethod = getSyncMethod();
-    if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
+    if (syncMethod === "B") log("rc", "Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
     let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
       flip: wantFlip,
       watermarkText: wantWm,
