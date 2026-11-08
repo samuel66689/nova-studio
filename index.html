@@ -1,1 +1,960 @@
-<!doctype html><title>stub</title>stub base for full-repo review
+<!DOCTYPE html>
+<html lang="my">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#101314">
+<title>Sam's Studio — Browser Video Tools</title>
+<!-- COOP/COEP headers via service worker (ffmpeg.wasm multi-thread အတွက်) -->
+<script src="coi-serviceworker.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "@ffmpeg/ffmpeg": "./ffmpeg-lib/ffmpeg/index.js",
+    "@ffmpeg/util": "./ffmpeg-lib/util/index.js"
+  }
+}
+</script>
+<style>
+@font-face { font-family: "Aka07"; src: url("fonts/Aka07-Bold.ttf"); }
+@font-face { font-family: "Aka011"; src: url("fonts/Aka011-Regular.ttf"); }
+@font-face { font-family: "AJKunheing"; src: url("fonts/AJKunheingETM06-Regular.ttf"); }
+@font-face { font-family: "MyanmarFont"; src: url("fonts/MyanmarFont-Regular.ttf"); }
+@font-face { font-family: "MyanmarFont2"; src: url("fonts/MyanmarFont2.ttf"); }
+@font-face { font-family: "NotoSansMyanmar"; src: url("fonts/NotoSansMyanmar.ttf"); }
+
+/* ============ TOKENS — Astryx GOTHIC (Dark Pro Studio) ============
+   Values taken from Meta Astryx theme-gothic v0.7.11 (MIT):
+   body/surface #101314, card #191d20, muted #24292d, text #e8f1f6,
+   secondary #96a0ab, success moss #b3c79a, warning candle #d3c490,
+   error rose #c6a6a2 / #d97580, info periwinkle #a3b5d6.
+   The light ice accent is reserved for primary actions,
+   selected states and focus — not used as a general decoration.
+   Token NAMES are unchanged from before so every inline style that
+   references var(--dim) / var(--acc) / var(--line) / var(--line-soft)
+   keeps working. Only the values changed. */
+:root {
+  --bg: #101314;
+  --bg2: #0b0d0e;
+  --surface: #101314;
+  --surface2: #24292d;
+  --card: #191d20;
+  --line: #3e454b;
+  --line-soft: #262b2f;
+  --acc: #e8f1f6;
+  --acc-hover: #ffffff;
+  --acc-soft: rgba(232, 241, 246, .12);
+  --acc2: #c89aab;
+  --txt: #e8f1f6;
+  --dim: #96a0ab;
+  --dim2: #7e8791;
+  --ok: #b3c79a;
+  --err: #d97580;
+  --warn: #d3c490;
+  --info: #a3b5d6;
+  --r: 16px;
+  --r-sm: 12px;
+  --r-xs: 10px;
+  --shadow: 0 4px 16px rgba(0, 0, 0, .35);
+  --nav-h: 76px;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { scroll-behavior: smooth; }
+::selection { background: rgba(232, 241, 246, .35); color: #fff; }
+body {
+  margin: 0 auto;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "Noto Sans Myanmar", "Myanmar Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 760px;
+  padding: 0 14px calc(var(--nav-h) + 28px);
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ============ APP BAR ============ */
+.appbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--line-soft);
+  margin: 0 -14px;
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 19px; }
+.brand .bolt {
+  width: 38px; height: 38px; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: 21px;
+  background: var(--acc); color: #101314;
+  box-shadow: 0 2px 10px rgba(232, 241, 246, .22);
+}
+.brand .name { color: var(--txt); letter-spacing: .2px; }
+.icon-btn {
+  width: 44px; height: 44px; border-radius: var(--r-sm);
+  display: grid; place-items: center; font-size: 21px; cursor: pointer;
+  background: var(--surface2); border: 1px solid var(--line);
+  transition: transform .15s, border-color .15s, box-shadow .15s;
+  user-select: none;
+}
+.icon-btn:active { transform: scale(.92); }
+#settingsToggle:checked ~ .appbar .icon-btn,
+.icon-btn.on { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(232, 241, 246, .25); }
+.tagline {
+  text-align: center; color: var(--dim); font-size: 13px;
+  margin: 12px 4px 2px; line-height: 1.7;
+}
+
+/* ============ SETTINGS DRAWER (API keys) ============ */
+.settings-drawer {
+  overflow: hidden; max-height: 0; opacity: 0;
+  transition: max-height .38s ease, opacity .3s ease, margin .3s ease;
+  margin: 0;
+}
+#settingsToggle:checked ~ .settings-drawer { max-height: 560px; opacity: 1; margin: 12px 0 4px; }
+.settings-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 16px; box-shadow: var(--shadow);
+}
+.settings-card h2 { margin: 0 0 6px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+
+/* ============ CARDS / SECTIONS ============ */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 18px 16px;
+  margin: 14px 0;
+  box-shadow: var(--shadow);
+  animation: fadeUp .35s ease both;
+}
+.card h2 { margin: 0 0 12px; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+/* The recap card stays visually distinguished, but with a quiet
+   ice-tinted border instead of the old gradient frame + badge. */
+.card.hero { border-color: rgba(232, 241, 246, .45); }
+.sect {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  padding: 14px 12px;
+  margin: 14px 0;
+  background: var(--surface2);
+}
+.sect > label:first-child, .sect-title {
+  display: block; font-size: 14px; font-weight: 700; color: var(--txt);
+  margin: 0 0 8px;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tabpage { display: none; }
+.tabpage.active { display: block; animation: fadeUp .3s ease both; }
+
+/* ============ FORM ============ */
+label { display: block; font-size: 13px; color: var(--dim); margin: 12px 0 6px; font-weight: 600; }
+input[type=text], input[type=password], input[type=number], input[type=file], select, textarea {
+  width: 100%; padding: 12px 13px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: var(--bg); color: var(--txt);
+  font-size: 15px; font-family: inherit; outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px rgba(232, 241, 246, .30);
+}
+select {
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2396a0ab' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+  padding-right: 36px;
+}
+input[type=file] { padding: 10px; font-size: 14px; }
+input[type=file]::file-selector-button {
+  background: var(--surface2); color: var(--txt); border: 1px solid var(--line);
+  border-radius: var(--r-xs); padding: 8px 14px; font-family: inherit; font-size: 14px;
+  margin-right: 10px; cursor: pointer;
+}
+textarea { min-height: 110px; resize: vertical; line-height: 1.7; font-size: 13.5px; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
+.row > * { min-width: 0; }
+
+/* toggle switch checkboxes — geometry unchanged, checked state is solid ice */
+.chk { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 14.5px; cursor: pointer; }
+.chk input {
+  appearance: none; -webkit-appearance: none;
+  width: 46px; height: 27px; border-radius: 999px; flex: 0 0 auto;
+  background: #24292d; border: 1px solid var(--line); position: relative;
+  cursor: pointer; transition: background .2s, border-color .2s; margin: 0;
+}
+.chk input::after {
+  content: ""; position: absolute; top: 2px; left: 2px;
+  width: 21px; height: 21px; border-radius: 50%;
+  background: #96a0ab; transition: transform .2s, background .2s;
+}
+.chk input:checked { background: var(--acc); border-color: transparent; }
+.chk input:checked::after { transform: translateX(19px); background: #101314; }
+.chk span { line-height: 1.6; }
+
+/* ============ BUTTONS ============
+   Primary = solid ice (Gothic accent) with dark text. Secondary
+   (.ghost) = quiet surface. Accent is for the primary action only. */
+button {
+  background: var(--acc); color: #101314; border: 0; border-radius: var(--r-sm);
+  padding: 14px 18px; font-size: 16px; font-weight: 800; font-family: inherit;
+  cursor: pointer; margin-top: 12px; min-height: 52px; width: 100%;
+  box-shadow: 0 2px 10px rgba(232, 241, 246, .30);
+  transition: transform .12s, box-shadow .2s, filter .2s, background .2s;
+  touch-action: manipulation;
+}
+button:active { transform: scale(.97); filter: brightness(1.05); }
+button:disabled { opacity: .45; cursor: wait; box-shadow: none; }
+button.ghost {
+  background: var(--surface2); border: 1px solid var(--line);
+  box-shadow: none; font-weight: 700; color: var(--txt);
+}
+button.ghost:active { border-color: var(--acc); }
+.btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-row button { margin-top: 12px; flex: 1 1 150px; }
+
+/* Visible keyboard focus — ice ring on every interactive element */
+button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
+.rc-tool:focus-visible, a:focus-visible {
+  outline: 2px solid var(--acc-hover); outline-offset: 2px;
+}
+
+/* ============ BOTTOM NAV ============ */
+.bottomnav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  display: flex; align-items: flex-end; justify-content: space-around;
+  padding: 10px 18px calc(10px + env(safe-area-inset-bottom));
+  background: var(--bg2);
+  border-top: 1px solid var(--line);
+}
+.tab-btn {
+  flex: 1; max-width: 220px; margin: 0; padding: 10px 6px; min-height: 0;
+  background: transparent; border: 0; box-shadow: none; border-radius: var(--r-sm);
+  color: var(--dim); font-size: 12.5px; font-weight: 700;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: auto; transition: background .25s, color .25s, box-shadow .25s;
+}
+.tab-btn .tico { font-size: 23px; line-height: 1; }
+.tab-btn.active { color: #101314; background: var(--acc);
+  box-shadow: 0 2px 12px rgba(232, 241, 246, .35); }
+.tab-btn.fab {
+  flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
+  background: var(--surface2); color: var(--dim); margin-top: -34px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
+  border: 4px solid var(--bg);
+  font-size: 11.5px; gap: 2px; padding: 8px 4px;
+}
+.tab-btn.fab .tico { font-size: 27px; }
+.tab-btn.fab.active { color: #101314; background: var(--acc);
+  box-shadow: 0 4px 16px rgba(232, 241, 246, .4); }
+.tab-btn:active { transform: scale(.94); }
+
+/* ============ PROGRESS ============ */
+.pbar {
+  height: 10px; background: var(--bg); border: 1px solid var(--line-soft);
+  border-radius: 999px; margin-top: 14px; overflow: hidden; position: relative;
+}
+.pfill {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: var(--acc); transition: width .25s ease; position: relative; overflow: hidden;
+}
+.pfill::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 30%, rgba(255, 255, 255, .25) 50%, transparent 70%);
+  animation: shimmer 1.4s infinite; transform: translateX(-100%);
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+.plabel { font-size: 13px; color: var(--dim); margin-top: 6px; min-height: 20px; }
+
+/* ============ LOG ============ */
+.log {
+  background: #0a0c0d; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+  padding: 12px; margin-top: 12px; font-size: 12.5px; line-height: 1.8;
+  max-height: 230px; overflow-y: auto; white-space: pre-wrap;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  user-select: text; -webkit-user-select: text;
+}
+.log-wrap { margin-top: 4px; }
+.log-copy {
+  display: block; margin: 4px 0 0 auto;
+  font-size: 12px; padding: 8px 12px; border-radius: 8px; min-height: 0;
+  background: transparent; border: 1px solid var(--line-soft); color: var(--dim2);
+  opacity: .7; width: auto;
+}
+.log-copy:active { opacity: 1; }
+.log:empty + .log-copy, .log-wrap:has(.log:empty) .log-copy { display: none; }
+.log:empty { display: none; }
+.log .ok { color: var(--ok); }
+.log .err { color: var(--err); }
+.log .t { color: var(--dim2); }
+
+/* ============ RESULTS ============ */
+.results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.results:empty { display: none; }
+.part {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--surface2); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 10px 12px; animation: fadeUp .25s ease both;
+}
+.part span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+.part a, .dl {
+  background: var(--acc-soft); border: 1px solid var(--acc); color: #fff;
+  text-decoration: none; padding: 9px 16px; border-radius: 11px;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+}
+
+/* ============ STEPS TIMELINE ============ */
+.steps { list-style: none; padding: 0; margin: 14px 0 0; counter-reset: step; }
+.steps li {
+  position: relative; padding: 11px 12px 11px 46px;
+  border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+  margin-bottom: 8px; font-size: 13.5px; background: var(--surface2);
+  line-height: 1.6; transition: border-color .25s, background .25s;
+}
+.steps li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 12.5px; font-weight: 800;
+  background: #24292d; color: var(--dim); transition: all .25s;
+}
+.steps li.run { border-color: var(--acc); background: var(--acc-soft); }
+.steps li.run::before { background: var(--acc); color: #101314; animation: pulse 1.2s infinite; }
+.steps li.done { border-color: rgba(179, 199, 154, .5); }
+.steps li.done::before { content: "✓"; background: var(--ok); color: #101314; }
+.steps li.fail { border-color: var(--err); }
+.steps li.fail::before { content: "!"; background: var(--err); color: #fff; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(232, 241, 246, .18); } }
+
+/* ============ MISC ============ */
+.hint { font-size: 13px; color: var(--dim); margin-top: 10px; line-height: 1.8; }
+.hint.warn { color: var(--warn); }
+.fileinfo { font-size: 13px; color: var(--dim); margin-top: 8px; }
+.fileinfo:empty { display: none; }
+
+/* blur boxes — editor.
+   Geometry (border width, radius, positions) is load-bearing for the
+   drag math, so only colors change here. */
+#blurWrap {
+  position: relative; width: 100%; background: #000;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  overflow: hidden; aspect-ratio: 16/9; margin-top: 8px;
+}
+#blurPrev { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; background: #000; }
+.bregion {
+  position: absolute; border: 2px solid var(--acc2);
+  background: rgba(200, 154, 171, .22); cursor: move; touch-action: none; box-sizing: border-box;
+  border-radius: 6px;
+}
+/* Enlarged grab handle. Center preserved (28px at -12px has the same
+   center as the old 22px at -9px), so resize math is unaffected. */
+.bhandle {
+  position: absolute; right: -12px; bottom: -12px; width: 28px; height: 28px;
+  border-radius: 50%; background: var(--acc2); cursor: nwse-resize;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
+}
+.bctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px;
+        background: var(--surface2); border: 1px solid var(--line-soft);
+        border-radius: var(--r-sm); padding: 10px; }
+.bctl label { margin: 0; font-size: 12px; }
+.bctl input { width: 66px; padding: 8px; font-size: 13px; flex: 0 0 auto; margin: 0; }
+.btitle { font-size: 13px; font-weight: 700; }
+#blurList .part { margin-top: 8px; }
+
+/* recap blur preview — geometry untouched (drag math + overlay math) */
+#rcBlurPrev { border-radius: var(--r-sm); border: 1px solid var(--line); background: #000; }
+#rcLogoPrev { border-radius: var(--r-sm); border: 1px solid var(--line); }
+/* Preview section: clean, fully visible, no clipping */
+.rc-preview-section {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r-sm); padding: 12px; margin: 12px 0;
+}
+.rc-preview-section #rcBlurWrap {
+  max-width: 320px !important; margin: 0 auto;
+}
+details.rc-sect { margin-top: 8px; border: 1px solid var(--line); border-radius: var(--r-xs); }
+details.rc-sect > summary {
+  padding: 12px 14px; cursor: pointer; font-weight: 600;
+  list-style: none; display: flex; align-items: center; gap: 8px;
+}
+details.rc-sect > summary::-webkit-details-marker { display: none; }
+details.rc-sect > summary::before { content: "▶"; font-size: 10px; color: var(--dim); }
+details.rc-sect[open] > summary::before { content: "▼"; }
+details.rc-sect > .sect-body { padding: 0 12px 12px; }
+/* Stage 2: Preview tool tabs — 44px tap height */
+.rc-tools {
+  display: flex; gap: 4px; margin: 8px 0;
+  flex-wrap: nowrap; overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.rc-tool {
+  flex: 1 0 auto; font-size: 12.5px; padding: 10px 8px; border-radius: var(--r-xs);
+  border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer; color: var(--dim); white-space: nowrap;
+  text-align: center; min-width: 0; min-height: 44px;
+  display: flex; align-items: center; justify-content: center;
+}
+.rc-tool.active {
+  border-color: var(--acc); color: var(--txt);
+  background: var(--acc-soft); font-weight: 600;
+}
+#rcBlurWrap.tool-sub #rcLogoDrag,
+#rcBlurWrap.tool-sub .rcbox { pointer-events: none; opacity: .4; }
+#rcBlurWrap.tool-logo #rcSubPreview,
+#rcBlurWrap.tool-logo .rcbox { pointer-events: none; opacity: .4; }
+#rcBlurWrap.tool-blur #rcSubPreview,
+#rcBlurWrap.tool-blur #rcLogoDrag { pointer-events: none; opacity: .4; }
+/* Visible mode feedback — these colors encode the active tool, keep exact */
+#rcBlurWrap.tool-sub { outline: 2px solid #4da6ff; outline-offset: 2px; }
+#rcBlurWrap.tool-logo { outline: 2px solid #ffaa00; outline-offset: 2px; }
+#rcBlurWrap.tool-blur { outline: 2px solid #ff5555; outline-offset: 2px; }
+#rcBlurWrap.tool-sub #rcSubPreview { outline: 1px dashed #4da6ff; }
+#rcBlurWrap.tool-logo #rcLogoDrag { border-color: #ffaa00 !important; border-width: 2px !important; }
+#rcBlurWrap.tool-blur .rcbox { border-color: #ff5555 !important; }
+.rc-mode-label {
+  font-size: 12.5px; color: var(--dim); text-align: center;
+  margin-top: 4px; min-height: 16px;
+}
+
+
+/* ============ TOASTS + CONFIRM DIALOG (Gothic) ============ */
+#nova-toasts {
+  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+  z-index: 9998; display: flex; flex-direction: column; gap: 10px;
+  width: min(92vw, 480px); pointer-events: none;
+}
+.nova-toast {
+  pointer-events: auto; display: flex; gap: 12px; align-items: flex-start;
+  background: var(--card); border: 1px solid var(--line);
+  border-left: 4px solid var(--dim); border-radius: 14px;
+  padding: 13px 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+  font-size: 14.5px; line-height: 1.65; color: var(--txt);
+  animation: toastIn .3s ease both; transition: opacity .3s, transform .3s;
+}
+.nova-toast.out { opacity: 0; transform: translateY(-6px); }
+.nova-toast .nt-ico {
+  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 14px; font-weight: 900;
+  background: var(--surface2); color: var(--txt); margin-top: 1px;
+}
+.nova-toast.success { border-left-color: var(--ok); }
+.nova-toast.success .nt-ico { background: var(--ok); color: #101314; }
+.nova-toast.error { border-left-color: var(--err); }
+.nova-toast.error .nt-ico { background: var(--err); color: #101314; }
+.nova-toast.warn { border-left-color: var(--warn); }
+.nova-toast.warn .nt-ico { background: var(--warn); color: #101314; }
+.nova-toast.info { border-left-color: var(--info); }
+.nova-toast.info .nt-ico { background: var(--info); color: #101314; }
+.nova-toast .nt-msg { flex: 1; white-space: pre-line; word-break: break-word; }
+.nova-toast .nt-x {
+  flex: 0 0 auto; width: auto; min-height: 0; margin: 0; padding: 2px 7px;
+  background: transparent; border: 0; box-shadow: none; color: var(--dim);
+  font-size: 17px; font-weight: 700; line-height: 1;
+}
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.nova-dialog-overlay {
+  position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+  background: rgba(5, 7, 8, .72); backdrop-filter: blur(3px); padding: 18px;
+}
+.nova-dialog {
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
+  width: 100%; max-width: 440px; padding: 20px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .6); animation: fadeUp .25s ease both;
+}
+.nova-dialog h3 { margin: 0 0 8px; font-size: 17px; }
+.nova-dialog .nd-msg { white-space: pre-line; color: var(--dim); font-size: 14.5px; line-height: 1.7; }
+.nova-dialog .btn-row { margin-top: 6px; }
+.nova-dialog button.danger { background: #c6a6a2; color: #101314; box-shadow: none; }
+
+/* error box injected by inline script */
+#js-errbox {
+  position: fixed; left: 12px; right: 12px; bottom: calc(var(--nav-h) + 14px);
+  z-index: 9997; background: var(--card); color: var(--txt);
+  border: 1px solid var(--line); border-left: 4px solid var(--err);
+  border-radius: 14px; padding: 12px 14px; font-size: 13px; line-height: 1.6;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55); max-height: 35vh; overflow: auto;
+}
+#js-errbox .je-head { display: flex; justify-content: space-between; align-items: center; font-weight: 800; margin-bottom: 4px; }
+#js-errbox .je-x { width: auto; min-height: 0; margin: 0; padding: 2px 8px; background: transparent; box-shadow: none; color: var(--dim); font-size: 16px; }
+#js-errbox pre { margin: 0; white-space: pre-wrap; color: var(--dim); font-size: 11.5px; }
+
+/* Hover states only on devices that really hover — avoids sticky
+   hover styles on Android after tapping a button. */
+@media (hover: hover) {
+  button:hover { background: var(--acc-hover); }
+  button.ghost:hover { border-color: var(--acc); }
+  .tab-btn:hover { background: var(--surface2); }
+  .tab-btn.active:hover { background: var(--acc-hover); }
+}
+
+/* ============ RESPONSIVE ============ */
+@media (min-width: 560px) {
+  .row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+}
+/* Narrow phones: tighten outer padding, keep every control reachable */
+@media (max-width: 380px) {
+  body { padding-left: 10px; padding-right: 10px; }
+  .appbar { margin: 0 -10px; padding-left: 12px; padding-right: 12px; }
+  .card { padding: 16px 12px; }
+  .settings-card { padding: 14px 12px; }
+}
+/* Desktop: wider column, same order, more breathing room */
+@media (min-width: 1024px) {
+  body { max-width: 900px; padding-left: 24px; padding-right: 24px; }
+  .appbar { margin: 0 -24px; padding-left: 24px; padding-right: 24px; }
+  .card { padding: 22px 20px; }
+}
+/* Reduced motion: keep status meaning, drop decorative animation */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .card, .tabpage.active, .part { animation: none; }
+  .pfill::after { animation: none; }
+  .steps li.run::before { animation: none; }
+}
+</style>
+
+</head>
+<body>
+
+<input type="checkbox" id="settingsToggle" hidden>
+<!-- ======= APP BAR ======= -->
+<header class="appbar">
+  <div class="brand">
+    <span class="bolt">⚡</span>
+    <span class="name">Sam's Studio</span>
+  </div>
+  <label class="icon-btn" for="settingsToggle" title="API Keys">⚙️</label>
+</header>
+<p class="tagline">Video edit က browser ထဲမှာပဲ — AI script နဲ့ အသံအတွက်တော့ server/API သုံးပါတယ်</p>
+
+<!-- ======= SETTINGS DRAWER (API KEYS) ======= -->
+<div class="settings-drawer">
+  <div class="settings-card">
+    <h2>⚙️ API Keys</h2>
+    <label>Groq API Key <span style="color:var(--dim)">(transcribe အတွက် — <a href="https://console.groq.com" target="_blank" style="color:var(--acc)">console.groq.com</a> → API Keys → Create)</span></label>
+    <input type="password" id="groqKey" placeholder="gsk_..." autocomplete="off">
+    <label>Assembly AI Key <span style="color:var(--dim)">(Groq မရရင် fallback — VPN နဲ့ရ — <a href="https://www.assemblyai.com/dashboard/signup" target="_blank" style="color:var(--acc)">assemblyai.com</a> → Sign up → API key copy)</span></label>
+    <input type="password" id="aaiKey" placeholder="..." autocomplete="off">
+    <label>Gemini API Key <span style="color:var(--dim)">(recap script အတွက် — <a href="https://aistudio.google.com" target="_blank" style="color:var(--acc)">aistudio.google.com</a> → Get API Key)</span></label>
+    <input type="password" id="geminiKey" placeholder="AIza..." autocomplete="off">
+    <div class="btn-row">
+      <button id="saveKeys">💾 သိမ်းမယ်</button>
+      <button id="clearKeys" class="ghost">🗑 ဖျက်မယ်</button>
+    </div>
+    <div class="hint warn" id="keyStatus">⚠️ Key မထည့်ရသေးပါ</div>
+    <div class="hint">Keys တွေကို ဒီ browser ရဲ့ localStorage ထဲမှာပဲ သိမ်းတယ် — server ပေါ်မှာ မသိမ်းဘူး။ ဒါပေမယ့် AI သုံးတဲ့အခါ key ကို app ရဲ့ proxy server မှတစ်ဆင့် Google ဆီ ပို့ပေးရပါတယ် (proxy က key ကို မသိမ်းထားပါဘူး)။</div>
+  </div>
+</div>
+
+<main>
+<!-- ============ NOVA CUT ============ -->
+<section class="tabpage" id="tab-cut">
+  <div class="card">
+    <h2>✂️ Cut by Sam — Video အပိုင်းလိုက် ဖြတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="cutFile" accept="video/*">
+    <div class="fileinfo" id="cutFileInfo"></div>
+    <label>တစ်ပိုင်းကို မိနစ် (ပုံမှန် ၈)</label>
+    <input type="number" id="cutMinutes" value="8" min="1" max="120" step="1">
+    <button id="startCut">✂️ ဖြတ်မယ်</button>
+    <div class="pbar"><div class="pfill" id="cutProgress"></div></div>
+    <div class="plabel" id="cutProgressLabel"></div>
+    <div class="results" id="cutResults"></div>
+    <button id="downloadAll" class="ghost" style="display:none">⬇️ အားလုံး download</button>
+    <div class="log-wrap">
+      <div class="log" id="cutLog"></div>
+      <button class="log-copy" onclick="copyLog('cutLog')">📋</button>
+    </div>
+    <div class="hint">Re-encode မလုပ်ဘူး (stream copy) — ဒါကြောင့် အရမ်းမြန်တယ်။ Download ဆိုတာ browser memory ကနေ save ချရုံပဲ။</div>
+  </div>
+</section>
+
+<!-- ============ VIDEO EDITOR ============ -->
+<section class="tabpage" id="tab-editor">
+  <div class="card">
+    <h2>🎬 Video Editor</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="edFile" accept="video/*">
+    <div class="fileinfo" id="edFileInfo"></div>
+
+    <label>Crop (အချိုး)</label>
+    <select id="cropSel">
+      <option value="original">မူရင်း (မဖြတ်ဘူး)</option>
+      <option value="16:9">16:9 (YouTube)</option>
+      <option value="9:16">9:16 (TikTok/Reels)</option>
+      <option value="1:1">1:1 (Square)</option>
+    </select>
+
+    <div class="chk"><input type="checkbox" id="flipChk"><span>↔️ မှန်ပြောင်း (horizontal flip)</span></div>
+    <div class="chk"><input type="checkbox" id="compressChk"><span>🗜️ 480p ကို compress လုပ်မယ်</span></div>
+
+    <label>Watermark စာသား (မထည့်ချင်ရင် ချန်ထား)</label>
+    <input type="text" id="wmText" placeholder="ဥပမာ: @myaccount">
+
+    <label>စာတန်းထိုး .srt file (burn-in — မထည့်ချင်ရင် ချန်ထား)</label>
+    <input type="file" id="srtFile" accept=".srt">
+
+    <div class="sect">
+      <span class="sect-title">🟫 Blur Box များ <span style="color:var(--dim);font-weight:400;font-size:12px;">(မျက်နှာ/logo ဖျက်ရန် — preview ပေါ်မှာ ဆွဲရွှေ့လို့ရ)</span></span>
+      <div id="blurWrap">
+        <video id="blurPrev" controls muted playsinline></video>
+      </div>
+      <div class="hint">Preview မှာ ပုံ ဆန့်နေသလို မြင်ရနိုင်တယ် — box တွေရဲ့ နေရာက final video ပေါ်မှာ အတိအကျ ကိုက်ညီမယ်။</div>
+      <button id="addBlur" class="ghost">➕ Blur box ထည့်</button>
+      <div id="blurList"></div>
+    </div>
+
+    <div class="btn-row">
+      <button id="startEdit">🎬 လုပ်မယ်</button>
+      <button id="canvasExportBtn" class="ghost">📹 Canvas နဲ့ ထုတ် (memory safe)</button>
+      <button id="extractAudio" class="ghost">🎵 အသံထုတ်မယ် (MP3)</button>
+    </div>
+    <div class="pbar"><div class="pfill" id="edProgress"></div></div>
+    <div class="plabel" id="edProgressLabel"></div>
+    <div class="results" id="edResults"></div>
+    <div class="log-wrap">
+      <div class="log" id="edLog"></div>
+      <button class="log-copy" onclick="copyLog('edLog')">📋</button>
+    </div>
+    <div class="hint">Filter (crop/flip/subtitle/compress) တစ်ခုမှ မသုံးရင် re-encode မလုပ်ဘဲ အမြန် copy ကူးမယ်။</div>
+  </div>
+</section>
+
+<!-- ============ RECAP NOVA ============ -->
+<section class="tabpage active" id="tab-recap">
+  <div class="card hero">
+    <h2>🎙️ Sam's recap — Video ကနေ recap video ထုတ်မယ်</h2>
+    <label>Video file ရွေးပါ</label>
+    <input type="file" id="rcFile" accept="video/*">
+    <div class="fileinfo" id="rcFileInfo"></div>
+
+    <div id="rcBlurSection" style="display:none;" class="rc-preview-section">
+      <div class="rc-tools" id="rcTools">
+        <button class="rc-tool active" data-tool="all">👆 All</button>
+        <button class="rc-tool" data-tool="sub">📝 Sub</button>
+        <button class="rc-tool" data-tool="logo">🖼️ Logo</button>
+        <button class="rc-tool" data-tool="blur">🟫 Blur</button>
+      </div>
+      <div class="rc-mode-label" id="rcModeLabel">👆 All overlays active</div>
+      <div id="rcBlurWrap" style="position:relative;width:100%;max-width:340px;aspect-ratio:9/16;background:#000;border-radius:12px;overflow:hidden;margin:0 auto;">
+        <video id="rcBlurPrev" controls playsinline style="width:100%;height:100%;object-fit:cover;display:block;"></video>
+      </div>
+      <div id="rcBlurControls">
+        <div class="btn-row" style="margin-top:8px;">
+          <button id="rcAddBlur" class="ghost" style="white-space:nowrap;">+ Blur box ထည့်</button>
+          <button id="rcClearBlur" class="ghost" style="white-space:nowrap;">🗑️ ရှင်း</button>
+        </div>
+        <div id="rcBlurList"></div>
+      </div>
+      <div id="rcSettingsDock" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="row" style="align-items:flex-end;">
+      <div>
+        <label>Transcribe ဘာသာစကား</label>
+        <select id="rcLang">
+          <option value="auto">Auto</option>
+          <option value="zh">中文 (Chinese)</option>
+          <option value="en">English</option>
+          <option value="my">မြန်မာ</option>
+        </select>
+      </div>
+      <div>
+        <label>အသံ (TTS voice)</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <select id="rcVoice" style="flex:1;min-width:0;">
+          <option value="my-MM-NilarNeural">👩 Nilar (မိန်းကလေး) — Edge</option>
+          <option value="my-MM-ThihaNeural" selected>👨 Thiha (ယောကျ်ားလေး) — Edge</option>
+        </select>
+          <button id="previewVoice" class="ghost" style="white-space:nowrap;padding:0 10px;align-self:stretch;min-height:0;margin-top:0;font-size:14px;" title="အသံအစမ်းနားထောင်">🔊 စမ်း</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Narration style</label>
+        <select id="rcStyle">
+          <option value="story">📖 Story — ဇာတ်လမ်းရှင်း</option>
+          <option value="viral">🔥 Viral — hook ဆန်ဆန်</option>
+        </select>
+      </div>
+      <div>
+        <label>Recap အရှည် (မူရင်း %)</label>
+        <select id="rcDurationPct">
+          <option value="10">10% — အတို</option>
+          <option value="20">20%</option>
+          <option value="30">30%</option>
+          <option value="50" selected>50% — ပုံမှန်</option>
+          <option value="80">80% — အရှည်</option>
+          <option value="100">100% — အပြည့်</option>
+        </select>
+      </div>
+      <div>
+        <label>AI ကြည့်ပုံ</label>
+        <select id="rcWatchMode">
+          <option value="fullvideo">🎬 Video အပြည့် (Gemini Files API — ပိုတိကျ)</option>
+          <option value="frames">🖼️ Frames (မြန်, token နည်း)</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:10px;">
+      <label style="display:block;margin-bottom:6px;">🎨 Series Preset</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <select id="rcPresetSel" style="flex:1;min-width:120px;">
+          <option value="">— Preset မရွေး —</option>
+        </select>
+        <button id="rcPresetApply" class="ghost" style="font-size:12px;">✅ သုံး</button>
+        <button id="rcPresetSave" class="ghost" style="font-size:12px;">💾 သိမ်း</button>
+        <button id="rcPresetManage" class="ghost" style="font-size:12px;">⚙️</button>
+      </div>
+      <div id="rcPresetInfo" style="font-size:11px;color:var(--dim);margin-top:4px;"></div>
+      <div id="rcPresetEditor" style="display:none;margin-top:8px;padding:8px;border:1px solid var(--line-soft);border-radius:8px;">
+        <input type="text" id="rcPresetName" placeholder="Preset နာမည်" style="width:100%;margin-bottom:6px;">
+        <input type="text" id="rcPresetSeries" placeholder="Series title (optional)" style="width:100%;margin-bottom:6px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="rcPresetDoSave" style="font-size:12px;">💾 အသစ် သိမ်း</button>
+          <button id="rcPresetUpdate" class="ghost" style="font-size:12px;">🔄 Update</button>
+          <button id="rcPresetDup" class="ghost" style="font-size:12px;">📋 ပွား</button>
+          <button id="rcPresetDel" class="ghost" style="font-size:12px;">🗑️ ဖျက်</button>
+          <button id="rcPresetClose" class="ghost" style="font-size:12px;">✖️</button>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:10px;">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="rcSeriesOn" style="width:18px;height:18px;">
+        <span>📺 အပိုင်းဆက် Series</span>
+      </label>
+      <div id="rcSeriesBox" style="display:none;margin-top:8px;">
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <div style="flex:2;">
+            <label>ခေါင်းစဉ်</label>
+            <div style="display:flex;gap:4px;">
+              <select id="rcSeriesTitleSel" style="flex:1;">
+                <option value="">— အသစ် —</option>
+              </select>
+              <input type="text" id="rcSeriesTitle" placeholder="ခေါင်းစဉ်" style="flex:2;">
+            </div>
+          </div>
+          <div style="flex:0 0 110px;">
+            <label>အပိုင်း ("end" = ဆုံး)</label>
+            <input type="text" id="rcSeriesPart" placeholder="1" style="width:100%;">
+          </div>
+        </div>
+        <div style="margin-top:6px;">
+          <button id="rcMemView" class="ghost" style="font-size:12px;">📓 Memory ကြည့်/ပြင်</button>
+          <button id="rcMemDel" class="ghost" style="font-size:12px;">🗑 Memory ဖျက်</button>
+          <button id="rcMemExport" class="ghost" style="font-size:12px;">📤 Memory Export</button>
+          <button id="rcMemImport" class="ghost" style="font-size:12px;">📥 Memory Import</button>
+          <input type="file" id="rcMemImportFile" accept=".json,application/json" style="display:none;">
+        </div>
+        <div id="rcMemBox" style="display:none;margin-top:6px;">
+          <textarea id="rcMemText" rows="6" style="width:100%;font-size:12px;" placeholder="Memory..."></textarea>
+          <button id="rcMemSave" style="font-size:12px;">💾 Memory သိမ်း</button>
+        </div>
+        <div class="hint">နောက်ဆုံးပိုင်း ဆို အပိုင်းမှာ "end" လို့ ရေး — AI က hook ခန့်မှန်း ပေး မယ်</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>🔄 Video edit (auto)</label>
+        <div class="chk"><input type="checkbox" id="rcFlip"><span>ဘယ်ညာလှန် (flip)</span></div>
+        <div style="margin-top:6px;">
+          <label>Sync နည်း</label>
+          <select id="rcSyncMethod" style="width:100%;">
+            <option value="A">Method A — Current Sync</option>
+            <option value="B" selected>Method B — Audio Master Timeline (ပုံမှန် · အကြံပြု)</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label>Watermark စာသား</label>
+        <input type="text" id="rcWatermark" placeholder="sam recap" value="sam recap" style="width:100%;">
+      </div>
+    </div>
+
+    <!-- Subtitle style -->
+    <div class="sect">
+      <span class="sect-title">📝 Subtitle style</span>
+      <div class="chk" style="margin-top:4px;"><input type="checkbox" id="rcSubOn" checked><span>Subtitle ပြ (on/off)</span></div>
+      <div class="row">
+        <div>
+          <label>အရောင်</label>
+          <select id="rcSubColor">
+            <option value="#ffffff" selected>⚪ အဖြူ</option>
+            <option value="#000000">⚫ အနက်</option>
+            <option value="#ff0000">🔴 အနီ</option>
+            <option value="#0000ff">🔵 အပြာ</option>
+            <option value="#ff69b4">🌸 ပန်း</option>
+            <option value="#00ff00">🟢 အစိမ်း</option>
+            <option value="#ffff00">🟡 အဝါ</option>
+          </select>
+        </div>
+        <div>
+          <label>Font size</label>
+          <select id="rcSubSize">
+            <option value="20">20</option>
+            <option value="24">24</option>
+            <option value="28" selected>28</option>
+            <option value="32">32</option>
+            <option value="36">36</option>
+            <option value="40">40</option>
+          </select>
+        </div>
+        <div>
+          <label>Font</label>
+          <select id="rcSubFont">
+            <option value="Aka07" selected>Aka07 (Bold)</option>
+            <option value="Aka011">Aka011</option>
+            <option value="AJKunheing">AJKunheing</option>
+            <option value="MyanmarFont">MyanmarFont</option>
+            <option value="MyanmarFont2">MyanmarFont2</option>
+            <option value="NotoSansMyanmar">Noto Sans Myanmar</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label>Shade အရောင်</label>
+          <select id="rcShadeColor">
+            <option value="#000000" selected>⚫ အနက်</option>
+            <option value="#ffffff">⚪ အဖြူ</option>
+            <option value="#ff0000">🔴 အနီ</option>
+            <option value="#0000ff">🔵 အပြာ</option>
+            <option value="#ff69b4">🌸 ပန်း</option>
+            <option value="#00ff00">🟢 အစိမ်း</option>
+            <option value="#ffff00">🟡 အဝါ</option>
+          </select>
+        </div>
+        <div>
+          <label>Shade အထူ</label>
+          <select id="rcShadeThick">
+            <option value="2">ပါး (2)</option>
+            <option value="4" selected>လတ် (4)</option>
+            <option value="6">ထူ (6)</option>
+            <option value="8">အထူ (8)</option>
+          </select>
+        </div>
+        <div>
+          <label>စာနေရာ</label>
+          <select id="rcSubPos">
+            <option value="onBlur" selected>Blur box ပေါ်</option>
+            <option value="bottom">အောက်</option>
+          </select>
+        </div>
+        <div>
+          <label>Video အချိုး (Ratio)</label>
+          <select id="rcRatio">
+            <option value="9:16" selected>9:16 (TikTok/Reels)</option>
+            <option value="16:9">16:9 (YouTube)</option>
+            <option value="1:1">1:1 (Square)</option>
+            <option value="4:5">4:5 (Portrait)</option>
+            <option value="original">မူရင်း</option>
+          </select>
+        </div>
+        <div>
+          <label>Resolution</label>
+          <select id="rcRes">
+            <option value="480">480p (မြန်, file သေး)</option>
+            <option value="720" selected>720p (အကောင်း)</option>
+          </select>
+        </div>
+        <div>
+          <label>Video Fit</label>
+          <select id="rcFit">
+            <option value="cover" selected>Cover (ဖြည့်, ပိုတာဖြတ်)</option>
+            <option value="contain">Fit + Blur နောက်ခံ</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label>စမ်းကြည့် (စာရိုက် → preview ပေါ်မှာ ပေါ်)</label>
+        <input type="text" id="rcSubPreviewText" placeholder="စမ်းသပ်စာသား ရိုက်ပါ" style="width:100%;">
+      </div>
+    </div>
+
+    <!-- Logo -->
+    <div class="sect">
+      <span class="sect-title">🖼️ Logo</span>
+      <div class="row">
+        <div>
+          <input type="file" id="rcLogoFile" accept="image/*">
+        </div>
+        <div>
+          <label>ပုံစံ</label>
+          <select id="rcLogoShape">
+            <option value="square">◻️ လေးထောင့်</option>
+            <option value="circle" selected>⭕ အဝိုင်း (crop) (မူရင်း)</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint">Logo တင်ပြီးရင် preview ပေါ်မှာ ဆွဲရွှေ့နိုင်တယ်</div>
+      <div id="rcLogoWrap" style="position:relative;display:none;max-width:200px;">
+        <img id="rcLogoPrev" style="max-width:100%;display:block;">
+      </div>
+    </div>
+
+    <button id="startRecap">🎙️ Recap စမယ်</button>
+    <button id="rcSyncOnly" class="ghost" style="display:none;">🔄 Sync ပြန်လုပ် (TTS ပြန်မလုပ်ဘူး)</button>
+    <div class="pbar"><div class="pfill" id="rcProgress"></div></div>
+    <div class="plabel" id="rcProgressLabel"></div>
+
+    <ol class="steps" id="rcSteps">
+      <li data-step="audio">1️⃣ အသံခွဲထုတ်မယ် (browser)</li>
+      <li data-step="transcribe">2️⃣ စာသားပြောင်းမယ် — Groq → Assembly → Gemini</li>
+      <li data-step="script">3️⃣ Recap script ရေးမယ် — Gemini</li>
+      <li data-step="tts">4️⃣ အသံထွက်မယ် — Server TTS</li>
+      <li data-step="mux">5️⃣ Video နဲ့ တွဲမယ် + SRT ထုတ်မယ်</li>
+    </ol>
+
+    <label>Transcript (စစ်ကြည့်ရန်)</label>
+    <textarea id="rcTranscript" readonly placeholder="transcribe ပြီးရင် ဒီမှာ ပေါ်မယ်…"></textarea>
+    <label>Recap script (segments)</label>
+    <textarea id="rcScript" readonly placeholder="script ရရင် ဒီမှာ ပေါ်မယ်…"></textarea>
+
+    <div class="results" id="rcResults"></div>
+    <div class="log-wrap">
+      <div class="log" id="rcLog"></div>
+      <button class="log-copy" onclick="copyLog('rcLog')">📋</button>
+    </div>
+    <div class="hint">အဆင့်တိုင်းက ဒီ browser ထဲမှာပဲ (သို့) API ကို တိုက်ရိုက်ခေါ်တာ — video file က browser ထဲမှာပဲ (Full-video mode မှာ Gemini ကို upload လုပ်ပါတယ်)။ TTS မရရင် Web Speech နဲ့ အစမ်းနားထောင်လို့ရမယ်။</div>
+  </div>
+</section>
+</main>
+
+<!-- ============ BOTTOM NAV ============ -->
+<nav class="bottomnav">
+  <button class="tab-btn active" data-tab="recap"><span class="tico">🎙️</span><span>Sam's recap</span></button>
+  <button class="tab-btn" data-tab="editor" style="display:none;"><span class="tico">🎬</span><span>Video Editor</span></button>
+  <button class="tab-btn fab" data-tab="cut"><span class="tico">✂️</span><span>Cut by Sam</span></button>
+</nav>
+
+<script>
+window.__errs = [];
+function __showErr(m) {
+  window.__errs.push(m);
+  var d = document.getElementById("js-errbox");
+  if (!d) {
+    d = document.createElement("div");
+    d.id = "js-errbox";
+    d.innerHTML = '<div class="je-head"><span>⚠️ တစ်ခုခု မှားသွားပါတယ်</span><button class="je-x" aria-label="close">✕</button></div><div style="color:var(--dim);font-size:12.5px;margin-bottom:6px">App ကို refresh လုပ်ပြီး ပြန်စမ်းကြည့်ပါ။ ပြဿနာ ဆက်ဖြစ်နေရင် အောက်က အသေးစိတ်ကို copy ယူထားပါ။</div><pre></pre>';
+    d.querySelector(".je-x").addEventListener("click", function () { d.remove(); window.__errs = []; });
+    document.body.appendChild(d);
+  }
+  d.querySelector("pre").textContent = window.__errs.join("\n");
+}
+window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
+window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
+</script>
+<script type="module" src="app-v3.js?v=20261108gothic2"></script>
+</body>
+</html>
