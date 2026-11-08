@@ -3,6 +3,50 @@ import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ff
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
 import { canvasExport, canvasRecapSync, canvasRecapSyncB, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261027a";
 
+
+// ============ Nova Notify — Astryx Gothic themed toasts + confirm dialog ============
+// Replaces native alert()/confirm(): non-blocking toasts for messages,
+// a themed modal for decisions. Styles live in index.html (.nova-toast / .nova-dialog).
+function novaToast(msg, type = "info") {
+  let box = document.getElementById("nova-toasts");
+  if (!box) { box = document.createElement("div"); box.id = "nova-toasts"; document.body.appendChild(box); }
+  const icons = { success: "✓", error: "!", warn: "!", info: "i" };
+  const el = document.createElement("div");
+  el.className = "nova-toast " + type;
+  const ico = document.createElement("span"); ico.className = "nt-ico"; ico.textContent = icons[type] || "i";
+  const txt = document.createElement("span"); txt.className = "nt-msg"; txt.textContent = msg;
+  const x = document.createElement("button"); x.className = "nt-x"; x.textContent = "✕"; x.setAttribute("aria-label", "close");
+  el.append(ico, txt, x);
+  box.appendChild(el);
+  let gone = false;
+  const dismiss = () => { if (gone) return; gone = true; el.classList.add("out"); setTimeout(() => el.remove(), 320); };
+  x.addEventListener("click", dismiss);
+  setTimeout(dismiss, type === "error" ? 6500 : 4200);
+}
+function novaAlertType(msg) {
+  if (/✅|ပြီးပါပြီ|ပြီးပြီ|သိမ်းပြီး|Copy ပြီးပြီ/.test(msg)) return "success";
+  if (/မရပါ|အမှား|မတွေ့ပါ|မရှိပါ|fail|error/i.test(msg)) return "error";
+  if (/ရွေးပါ|ထည့်ပါ|စောင့်ပါ|အရင်ရွေး|အရင် ရွေး/.test(msg)) return "warn";
+  return "info";
+}
+function novaNotify(msg) { novaToast(String(msg), novaAlertType(String(msg))); }
+function novaConfirm(msg, opts = {}) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div"); ov.className = "nova-dialog-overlay";
+    const dg = document.createElement("div"); dg.className = "nova-dialog";
+    const h = document.createElement("h3"); h.textContent = opts.title || "အတည်ပြုပါ";
+    const p = document.createElement("div"); p.className = "nd-msg"; p.textContent = msg;
+    const row = document.createElement("div"); row.className = "btn-row";
+    const cancel = document.createElement("button"); cancel.className = "ghost"; cancel.textContent = opts.cancelLabel || "မလုပ်တော့ဘူး";
+    const ok = document.createElement("button"); if (opts.danger) ok.className = "danger"; ok.textContent = opts.okLabel || "ဆက်လုပ်မယ်";
+    row.append(cancel, ok); dg.append(h, p, row); ov.appendChild(dg); document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    cancel.addEventListener("click", () => done(false));
+    ok.addEventListener("click", () => done(true));
+    ov.addEventListener("click", (e) => { if (e.target === ov) done(false); });
+  });
+}
+
 // Wake up TTS server (cold start mitigation)
 try { fetch("https://nova-tts.onrender.com/").catch(() => {}); } catch (_) {}
 
@@ -15,7 +59,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcRatio")?.addEventListener("change", () => {
     rcApplyLayout();
-    alert("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
+    novaNotify("Ratio ပြောင်းသွားပါပြီ — Blur box တွေ ပြန်ထားပေးပါ");
   });
   $("rcRes")?.addEventListener("change", () => { rcApplyLayout(); });
   $("rcFit")?.addEventListener("change", () => { rcApplyLayout(); });
@@ -29,7 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   // Video pause warning (Chrome background tab)
   window.__novaOnVideoPause = () => {
-    // No alert() here: this fires DURING canvas recording, and a blocking
+    // No toast here: this fires DURING canvas recording, and a blocking
     // alert freezes frame capture while the recorder keeps running (A/V skew).
     log("rc", "⚠️ Video ရပ် သွား တယ်! Chrome tab ပြန် ဝင် ပါ — မ ထွက် ပါ နဲ့", "err");
   };
@@ -44,7 +88,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   $("rcMemView")?.addEventListener("click", () => {
     const t = ($("rcSeriesTitle").value || "").trim();
-    if (!t) { alert("ခေါင်းစဉ် အရင် ရွေး/ရိုက် ပါ"); return; }
+    if (!t) { novaNotify("ခေါင်းစဉ် အရင် ရွေး/ရိုက် ပါ"); return; }
     $("rcMemText").value = getMemory(t) || "";
     $("rcMemBox").style.display = $("rcMemBox").style.display === "none" ? "block" : "none";
   });
@@ -53,11 +97,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!t) return;
     saveMemory(t, $("rcMemText").value);
     refreshSeriesDropdown();
-    alert("Memory သိမ်းပြီးပါပြီ ✅");
+    novaNotify("Memory သိမ်းပြီးပါပြီ ✅");
   });
-  $("rcMemDel")?.addEventListener("click", () => {
+  $("rcMemDel")?.addEventListener("click", async () => {
     const t = ($("rcSeriesTitle").value || "").trim();
-    if (!t || !confirm(`"${t}" memory ဖျက် မလား?`)) return;
+    if (!t || !(await novaConfirm(`"${t}" memory ဖျက် မလား?`, { danger: true, okLabel: "ဖျက်မယ်" }))) return;
     delMemory(t);
     $("rcMemText").value = "";
     refreshSeriesDropdown();
@@ -69,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (k && k.startsWith("nova_series_mem_")) data[k] = localStorage.getItem(k);
     }
     const count = Object.keys(data).length;
-    if (!count) { alert("Export လုပ်စရာ Series Memory မရှိပါ"); return; }
+    if (!count) { novaNotify("Export လုပ်စရာ Series Memory မရှိပါ"); return; }
     const payload = { app: "nova-studio", kind: "series-memory", version: 1, exportedAt: new Date().toISOString(), memories: data };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -88,12 +132,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const j = JSON.parse(await f.text());
       const mem = (j && typeof j === "object" && j.memories && typeof j.memories === "object") ? j.memories : j;
       const keys = Object.keys(mem || {}).filter((k) => k.startsWith("nova_series_mem_") && typeof mem[k] === "string");
-      if (!keys.length) { alert("Import ဖိုင်ထဲမှာ Series Memory မတွေ့ပါ"); return; }
-      if (!confirm(`Series Memory ${keys.length} ခု import လုပ်မယ် — တူညီတဲ့ ခေါင်းစဉ်ဆို အစားထိုးပါမယ်။ ဆက်လုပ်မလား?`)) return;
+      if (!keys.length) { novaNotify("Import ဖိုင်ထဲမှာ Series Memory မတွေ့ပါ"); return; }
+      if (!(await novaConfirm(`Series Memory ${keys.length} ခု import လုပ်မယ် — တူညီတဲ့ ခေါင်းစဉ်ဆို အစားထိုးပါမယ်။ ဆက်လုပ်မလား?`))) return;
       for (const k of keys) localStorage.setItem(k, mem[k]);
       refreshSeriesDropdown();
-      alert(`Series Memory ${keys.length} ခု import ပြီးပါပြီ ✅`);
-    } catch (err) { alert("Import မရပါ: " + (err.message || err)); }
+      novaNotify(`Series Memory ${keys.length} ခု import ပြီးပါပြီ ✅`);
+    } catch (err) { novaNotify("Import မရပါ: " + (err.message || err)); }
   });
   rcApplyLayout();
 });
@@ -116,8 +160,8 @@ function copyLog(lid) {
   const box = document.getElementById(lid);
   if (!box) return;
   const text = box.innerText || "";
-  if (!text.trim()) { alert("Log ဗလာ ပါ"); return; }
-  const done = () => alert("📋 Copy ပြီးပြီ (" + text.split("\n").length + " ကြောင်း)");
+  if (!text.trim()) { novaNotify("Log ဗလာ ပါ"); return; }
+  const done = () => novaNotify("📋 Copy ပြီးပြီ (" + text.split("\n").length + " ကြောင်း)");
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
   } else fallbackCopy(text, done);
@@ -129,7 +173,7 @@ function fallbackCopy(text, done) {
   document.body.appendChild(ta);
   ta.select();
   try { document.execCommand("copy"); done(); }
-  catch (_) { alert("Copy မရပါ — စာကို ဖိပြီး ရွေးပါ"); }
+  catch (_) { novaNotify("Copy မရပါ — စာကို ဖိပြီး ရွေးပါ"); }
   document.body.removeChild(ta);
 }
 window.copyLog = copyLog;
@@ -257,10 +301,10 @@ function updateKeyStatus() {
 $("saveKeys").addEventListener("click", () => {
   saveKeys($("groqKey").value, $("geminiKey").value, $("aaiKey").value);
   updateKeyStatus();
-  alert("Keys တွေ သိမ်းပြီးပါပြီ ✅");
+  novaNotify("Keys တွေ သိမ်းပြီးပါပြီ ✅");
 });
-$("clearKeys").addEventListener("click", () => {
-  if (!confirm("Keys တွေ ဖျက်မှာလား?")) return;
+$("clearKeys").addEventListener("click", async () => {
+  if (!(await novaConfirm("Keys တွေ ဖျက်မှာလား?", { danger: true, okLabel: "ဖျက်မယ်" }))) return;
   clearKeys();
   $("groqKey").value = "";
   $("aaiKey").value = "";
@@ -326,7 +370,7 @@ $("cutFile").addEventListener("change", async (e) => {
 
 $("startCut").addEventListener("click", async () => {
   revokeUrls("cut");
-  if (!cutFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!cutFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
   const minutes = Math.max(1, parseFloat($("cutMinutes").value) || 8);
   const partSec = minutes * 60;
   setBusy(["startCut", "downloadAll"], true);
@@ -543,8 +587,8 @@ function addBlurRegion(r) {
 }
 
 $("addBlur").addEventListener("click", () => {
-  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
-  if (!edWH) { alert("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
+  if (!edFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
+  if (!edWH) { novaNotify("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
   const dur = $("blurPrev").duration;
   const t1 = (dur && isFinite(dur)) ? Math.round(dur * 10) / 10 : 10;
   addBlurRegion({ x: 0.35, y: 0.30, w: 0.30, h: 0.25, t0: 0, t1: t1, strength: 12 });
@@ -598,9 +642,9 @@ function buildPass2Args(regions, dims) {
 }
 
 $("startEdit").addEventListener("click", async () => {
-  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!edFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
   const dims = outDims();
-  if (blurRegions.length && !dims) { alert("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
+  if (blurRegions.length && !dims) { novaNotify("Preview load ဖြစ်အောင် ခဏစောင့်ပါ"); return; }
   setBusy(["startEdit", "extractAudio"], true);
   $("edResults").innerHTML = "";
   const vf = [];
@@ -698,7 +742,7 @@ $("startEdit").addEventListener("click", async () => {
 });
 
 $("canvasExportBtn").addEventListener("click", async () => {
-  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!edFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
   setBusy(["startEdit", "canvasExportBtn", "extractAudio"], true);
   $("edResults").innerHTML = "";
   try {
@@ -750,7 +794,7 @@ function parseSRT(txt) {
 }
 
 $("extractAudio").addEventListener("click", async () => {
-  if (!edFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!edFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
   setBusy(["startEdit", "extractAudio"], true);
   $("edResults").innerHTML = "";
   try {
@@ -1502,7 +1546,7 @@ function initPresetUI() {
   // Apply button
   $("rcPresetApply")?.addEventListener("click", async () => {
     const id = sel.value;
-    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    if (!id) { novaNotify("Preset အရင်ရွေးပါ"); return; }
     try {
       const p = await getPreset(id);
       if (!p) throw new Error("Preset မတွေ့ပါ");
@@ -1510,7 +1554,7 @@ function initPresetUI() {
       $("rcPresetInfo").textContent = `✅ "${p.name}" သုံးနေပါတယ်`;
       try { localStorage.setItem("nova_last_preset", id); } catch (_) {}
     } catch (e) {
-      alert("Preset apply မရပါ: " + (e.message || e));
+      novaNotify("Preset apply မရပါ: " + (e.message || e));
     }
   });
   // Save button - show editor
@@ -1529,7 +1573,7 @@ function initPresetUI() {
   $("rcPresetDoSave")?.addEventListener("click", async () => {
     const name = ($("rcPresetName") || {}).value || "";
     const series = ($("rcPresetSeries") || {}).value || "";
-    if (!name.trim()) { alert("Preset နာမည် ထည့်ပါ"); return; }
+    if (!name.trim()) { novaNotify("Preset နာမည် ထည့်ပါ"); return; }
     try {
       // Check for existing preset with same name + series
       const presets = await listPresets();
@@ -1538,10 +1582,9 @@ function initPresetUI() {
         (p.seriesTitle || "").trim().toLowerCase() === series.trim().toLowerCase()
       );
       if (dup) {
-        const choice = confirm(
-          `"${dup.name}" နာမည်တူ preset ရှိနေပါတယ်.\n\n` +
-          `OK = ရွေးထားတဲ့ preset ကို Update လုပ်\n` +
-          `Cancel = အသစ် အနေနဲ့ သိမ်း (duplicate)`
+        const choice = await novaConfirm(
+          `"${dup.name}" နာမည်တူ preset ရှိနေပါတယ်။`,
+          { okLabel: "Update လုပ်", cancelLabel: "အသစ် သိမ်း (duplicate)" }
         );
         if (choice) {
           // Update existing instead
@@ -1555,52 +1598,52 @@ function initPresetUI() {
       }
       // Check storage quota
       const warn = await checkStorageQuota();
-      if (warn) { if (!confirm(warn + "\n\nဆက်လုပ်မလား?")) return; }
+      if (warn) { if (!(await novaConfirm(warn + "\n\nဆက်လုပ်မလား?"))) return; }
       const p = await createPreset(name, series);
       $("rcPresetInfo").textContent = `💾 "${p.name}" သိမ်းပြီးပြီ`;
       $("rcPresetName").value = ""; $("rcPresetSeries").value = "";
       $("rcPresetEditor").style.display = "none";
       sel.value = p.id;
     } catch (e) {
-      alert("Preset သိမ်းမရပါ: " + (e.message || e));
+      novaNotify("Preset သိမ်းမရပါ: " + (e.message || e));
     }
   });
   // Update selected preset with current settings
   $("rcPresetUpdate")?.addEventListener("click", async () => {
     const id = sel.value;
-    if (!id) { alert("Update လုပ်ဖို့ preset အရင်ရွေးပါ"); return; }
+    if (!id) { novaNotify("Update လုပ်ဖို့ preset အရင်ရွေးပါ"); return; }
     const p = await getPreset(id);
-    if (!p) { alert("Preset မတွေ့ပါ"); return; }
-    if (!confirm(`"${p.name}" ရဲ့ settings ကို လက်ရှိ settings နဲ့ အစားထိုးမလား?`)) return;
+    if (!p) { novaNotify("Preset မတွေ့ပါ"); return; }
+    if (!(await novaConfirm(`"${p.name}" ရဲ့ settings ကို လက်ရှိ settings နဲ့ အစားထိုးမလား?`, { okLabel: "အစားထိုးမယ်" }))) return;
     try {
       await updatePresetWithCurrentSettings(id);
       $("rcPresetInfo").textContent = `🔄 "${p.name}" update ပြီးပြီ`;
       $("rcPresetEditor").style.display = "none";
     } catch (e) {
-      alert("Update မရပါ: " + (e.message || e));
+      novaNotify("Update မရပါ: " + (e.message || e));
     }
   });
   // Duplicate
   $("rcPresetDup")?.addEventListener("click", async () => {
     const id = sel.value;
-    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    if (!id) { novaNotify("Preset အရင်ရွေးပါ"); return; }
     try {
       const p = await duplicatePreset(id);
       sel.value = p.id;
       $("rcPresetInfo").textContent = `📋 "${p.name}" ပွားပြီးပြီ`;
-    } catch (e) { alert("ပွားမရပါ: " + (e.message || e)); }
+    } catch (e) { novaNotify("ပွားမရပါ: " + (e.message || e)); }
   });
   // Delete
   $("rcPresetDel")?.addEventListener("click", async () => {
     const id = sel.value;
-    if (!id) { alert("Preset အရင်ရွေးပါ"); return; }
+    if (!id) { novaNotify("Preset အရင်ရွေးပါ"); return; }
     const p = await getPreset(id);
-    if (!confirm(`"${p ? p.name : id}" ကို ဖျက်မလား?`)) return;
+    if (!(await novaConfirm(`"${p ? p.name : id}" ကို ဖျက်မလား?`, { danger: true, okLabel: "ဖျက်မယ်" }))) return;
     try {
       await deletePreset(id);
       sel.value = "";
       $("rcPresetInfo").textContent = "";
-    } catch (e) { alert("ဖျက်မရပါ: " + (e.message || e)); }
+    } catch (e) { novaNotify("ဖျက်မရပါ: " + (e.message || e)); }
   });
   // Track manual changes - show "modified" if settings differ from applied preset
   // (Phase 1: simple indicator, no auto-compare)
@@ -1744,9 +1787,9 @@ async function fixDuration(blob, ext, sec) {
 
 // Sync-only: uses saved rcLastRun, skips transcribe/script/TTS
 $("rcSyncOnly")?.addEventListener("click", async () => {
-  if (!rcLastRun || !rcLastRun.segPieces) { alert("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
-  if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
-  if (!muxRunMatchesFile(rcLastRun, rcFile)) { alert("Sync လုပ်စရာ data က တခြား video နဲ့ပါ — Recap အရင်ပြန်လုပ်ပါ"); return; }
+  if (!rcLastRun || !rcLastRun.segPieces) { novaNotify("Sync လုပ်စရာ data မရှိပါ — Recap အရင်လုပ်ပါ"); return; }
+  if (!rcFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
+  if (!muxRunMatchesFile(rcLastRun, rcFile)) { novaNotify("Sync လုပ်စရာ data က တခြား video နဲ့ပါ — Recap အရင်ပြန်လုပ်ပါ"); return; }
   if (!rcLastRun.fileName || !rcLastRun.fileSize) log("rc", "⚠️ သိမ်းထားတဲ့ data မှာ file အထောက်အထား မပါလို့ video မှန်ကြောင်း အလိုအလျောက် စစ်မရပါ — video မှန်ရဲ့လား သေချာပါစေ", "err");
   setBusy(["rcSyncOnly", "startRecap"], true);
   const { segments, segPieces, baseName } = rcLastRun;
@@ -1872,7 +1915,7 @@ $("rcFile").addEventListener("change", async (e) => {
         if (saved.script) $("rcScript").value = saved.script;
         rcLastRun = { segments: saved.segments, segPieces: saved.segPieces, baseName: saved.baseName, fileName: saved.fileName, fileSize: saved.fileSize };
         // Need the video file — user must re-select it
-        alert("Video file ကို ပြန်ရွေးပေးပါ (အသံက သိမ်းထားပြီးသား)");
+        novaNotify("Video file ကို ပြန်ရွေးပေးပါ (အသံက သိမ်းထားပြီးသား)");
         bar.remove();
         // Jump to step 5
         setStep("tts", "done");
@@ -1927,10 +1970,10 @@ $("previewVoice").addEventListener("click", async () => {
       audio.onended = () => URL.revokeObjectURL(url);
       await audio.play();
     } else {
-      alert("အသံထုတ်မရပါ");
+      novaNotify("အသံထုတ်မရပါ");
     }
   } catch (e) {
-    alert("အမှား: " + (e.message || e));
+    novaNotify("အမှား: " + (e.message || e));
   } finally {
     btn.disabled = false;
     btn.textContent = oldT;
@@ -1941,9 +1984,9 @@ $("previewVoice").addEventListener("click", async () => {
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
-  if (!rcFile) { alert("Video file အရင်ရွေးပါ"); return; }
+  if (!rcFile) { novaNotify("Video file အရင်ရွေးပါ"); return; }
   const sv = validateSeriesInputs();
-  if (!sv.ok) { alert(sv.error); log("rc", "❌ " + sv.error, "err"); return; }
+  if (!sv.ok) { novaNotify(sv.error); log("rc", "❌ " + sv.error, "err"); return; }
   acquireWakeLock();
   const lang = $("rcLang").value;
   const voice = $("rcVoice").value;
@@ -2342,7 +2385,7 @@ $("startRecap").addEventListener("click", async () => {
       prev.className = "ghost";
       prev.textContent = "🔊 Web Speech နဲ့ အစမ်းနားထောင်မယ် (အသံမသိမ်းဘူး)";
       prev.onclick = () => {
-        if (!previewWithWebSpeech(ttsFailed.text)) alert("ဒီ browser Web Speech မရပါ");
+        if (!previewWithWebSpeech(ttsFailed.text)) novaNotify("ဒီ browser Web Speech မရပါ");
       };
       $("rcResults").appendChild(prev);
       throw new Error("TTS ရပ်သွားပါတယ် — internet စစ်ပြီး ပြန်ကြိုးစားပါ။ " +
