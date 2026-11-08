@@ -3,7 +3,6 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#101314">
 <title>Sam's Studio — Browser Video Tools</title>
 <!-- COOP/COEP headers via service worker (ffmpeg.wasm multi-thread အတွက်) -->
 <script src="coi-serviceworker.js"></script>
@@ -23,35 +22,30 @@
 @font-face { font-family: "MyanmarFont2"; src: url("fonts/MyanmarFont2.ttf"); }
 @font-face { font-family: "NotoSansMyanmar"; src: url("fonts/NotoSansMyanmar.ttf"); }
 
-/* ============ TOKENS — Astryx GOTHIC (Dark Pro Studio) ============
-   Values taken from Meta Astryx theme-gothic v0.7.11 (MIT):
-   body/surface #101314, card #191d20, muted #24292d, text #e8f1f6,
-   secondary #96a0ab, success moss #b3c79a, warning candle #d3c490,
-   error rose #c6a6a2 / #d97580, info periwinkle #a3b5d6.
-   The light ice accent is reserved for primary actions,
+/* ============ TOKENS ============
+   Dark charcoal + violet. Violet is reserved for primary actions,
    selected states and focus — not used as a general decoration.
    Token NAMES are unchanged from before so every inline style that
    references var(--dim) / var(--acc) / var(--line) / var(--line-soft)
    keeps working. Only the values changed. */
 :root {
-  --bg: #101314;
-  --bg2: #0b0d0e;
-  --surface: #101314;
-  --surface2: #24292d;
-  --card: #191d20;
-  --line: #3e454b;
-  --line-soft: #262b2f;
-  --acc: #e8f1f6;
-  --acc-hover: #ffffff;
-  --acc-soft: rgba(232, 241, 246, .12);
-  --acc2: #c89aab;
-  --txt: #e8f1f6;
-  --dim: #96a0ab;
-  --dim2: #7e8791;
-  --ok: #b3c79a;
-  --err: #d97580;
-  --warn: #d3c490;
-  --info: #a3b5d6;
+  --bg: #111116;
+  --bg2: #17171e;
+  --surface: #191920;
+  --surface2: #22222b;
+  --card: #191920;
+  --line: #30303b;
+  --line-soft: #26262e;
+  --acc: #8b5cf6;
+  --acc-hover: #a78bfa;
+  --acc-soft: rgba(139, 92, 246, .14);
+  --acc2: #ec4899;
+  --txt: #f3f3f7;
+  --dim: #a3a3b3;
+  --dim2: #777787;
+  --ok: #34d399;
+  --err: #f87171;
+  --warn: #fbbf24;
   --r: 16px;
   --r-sm: 12px;
   --r-xs: 10px;
@@ -60,7 +54,7 @@
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { scroll-behavior: smooth; }
-::selection { background: rgba(232, 241, 246, .35); color: #fff; }
+::selection { background: rgba(139, 92, 246, .35); color: #fff; }
 body {
   margin: 0 auto;
   background: var(--bg);
@@ -89,8 +83,8 @@ body {
 .brand .bolt {
   width: 38px; height: 38px; border-radius: var(--r-sm);
   display: grid; place-items: center; font-size: 21px;
-  background: var(--acc); color: #101314;
-  box-shadow: 0 2px 10px rgba(232, 241, 246, .22);
+  background: var(--acc); color: #fff;
+  box-shadow: 0 2px 10px rgba(139, 92, 246, .35);
 }
 .brand .name { color: var(--txt); letter-spacing: .2px; }
 .icon-btn {
@@ -102,7 +96,7 @@ body {
 }
 .icon-btn:active { transform: scale(.92); }
 #settingsToggle:checked ~ .appbar .icon-btn,
-.icon-btn.on { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(232, 241, 246, .25); }
+.icon-btn.on { border-color: var(--acc); box-shadow: 0 0 0 3px rgba(139, 92, 246, .25); }
 .tagline {
   text-align: center; color: var(--dim); font-size: 13px;
   margin: 12px 4px 2px; line-height: 1.7;
@@ -133,8 +127,8 @@ body {
 }
 .card h2 { margin: 0 0 12px; font-size: 17px; display: flex; align-items: center; gap: 8px; }
 /* The recap card stays visually distinguished, but with a quiet
-   ice-tinted border instead of the old gradient frame + badge. */
-.card.hero { border-color: rgba(232, 241, 246, .45); }
+   violet-tinted border instead of the old gradient frame + badge. */
+.card.hero { border-color: rgba(139, 92, 246, .45); }
 .sect {
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
@@ -163,11 +157,11 @@ input[type=text], input[type=password], input[type=number], input[type=file], se
 }
 input:focus, select:focus, textarea:focus {
   border-color: var(--acc);
-  box-shadow: 0 0 0 3px rgba(232, 241, 246, .30);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, .30);
 }
 select {
   appearance: none; -webkit-appearance: none;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2396a0ab' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23a3a3b3' stroke-width='2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 14px center;
   padding-right: 36px;
 }
@@ -181,31 +175,31 @@ textarea { min-height: 110px; resize: vertical; line-height: 1.7; font-size: 13.
 .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; align-items: end; }
 .row > * { min-width: 0; }
 
-/* toggle switch checkboxes — geometry unchanged, checked state is solid ice */
+/* toggle switch checkboxes — geometry unchanged, checked state is now solid violet */
 .chk { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 14.5px; cursor: pointer; }
 .chk input {
   appearance: none; -webkit-appearance: none;
   width: 46px; height: 27px; border-radius: 999px; flex: 0 0 auto;
-  background: #24292d; border: 1px solid var(--line); position: relative;
+  background: #2b2b3d; border: 1px solid var(--line); position: relative;
   cursor: pointer; transition: background .2s, border-color .2s; margin: 0;
 }
 .chk input::after {
   content: ""; position: absolute; top: 2px; left: 2px;
   width: 21px; height: 21px; border-radius: 50%;
-  background: #96a0ab; transition: transform .2s, background .2s;
+  background: #8f89a8; transition: transform .2s, background .2s;
 }
 .chk input:checked { background: var(--acc); border-color: transparent; }
-.chk input:checked::after { transform: translateX(19px); background: #101314; }
+.chk input:checked::after { transform: translateX(19px); background: #fff; }
 .chk span { line-height: 1.6; }
 
 /* ============ BUTTONS ============
-   Primary = solid ice (Gothic accent) with dark text. Secondary
-   (.ghost) = quiet surface. Accent is for the primary action only. */
+   Primary = solid violet. Secondary (.ghost) = quiet surface.
+   Violet is used for the primary action only, not every button. */
 button {
-  background: var(--acc); color: #101314; border: 0; border-radius: var(--r-sm);
+  background: var(--acc); color: #fff; border: 0; border-radius: var(--r-sm);
   padding: 14px 18px; font-size: 16px; font-weight: 800; font-family: inherit;
   cursor: pointer; margin-top: 12px; min-height: 52px; width: 100%;
-  box-shadow: 0 2px 10px rgba(232, 241, 246, .30);
+  box-shadow: 0 2px 10px rgba(139, 92, 246, .30);
   transition: transform .12s, box-shadow .2s, filter .2s, background .2s;
   touch-action: manipulation;
 }
@@ -219,7 +213,7 @@ button.ghost:active { border-color: var(--acc); }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .btn-row button { margin-top: 12px; flex: 1 1 150px; }
 
-/* Visible keyboard focus — ice ring on every interactive element */
+/* Visible keyboard focus — violet ring on every interactive element */
 button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
 .rc-tool:focus-visible, a:focus-visible {
   outline: 2px solid var(--acc-hover); outline-offset: 2px;
@@ -241,8 +235,8 @@ button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
   width: auto; transition: background .25s, color .25s, box-shadow .25s;
 }
 .tab-btn .tico { font-size: 23px; line-height: 1; }
-.tab-btn.active { color: #101314; background: var(--acc);
-  box-shadow: 0 2px 12px rgba(232, 241, 246, .35); }
+.tab-btn.active { color: #fff; background: var(--acc);
+  box-shadow: 0 2px 12px rgba(139, 92, 246, .35); }
 .tab-btn.fab {
   flex: 0 0 auto; width: 84px; height: 84px; border-radius: 50%;
   background: var(--surface2); color: var(--dim); margin-top: -34px;
@@ -251,8 +245,8 @@ button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
   font-size: 11.5px; gap: 2px; padding: 8px 4px;
 }
 .tab-btn.fab .tico { font-size: 27px; }
-.tab-btn.fab.active { color: #101314; background: var(--acc);
-  box-shadow: 0 4px 16px rgba(232, 241, 246, .4); }
+.tab-btn.fab.active { color: #fff; background: var(--acc);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, .4); }
 .tab-btn:active { transform: scale(.94); }
 
 /* ============ PROGRESS ============ */
@@ -274,7 +268,7 @@ button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
 
 /* ============ LOG ============ */
 .log {
-  background: #0a0c0d; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
+  background: #0c0c12; border: 1px solid var(--line-soft); border-radius: var(--r-sm);
   padding: 12px; margin-top: 12px; font-size: 12.5px; line-height: 1.8;
   max-height: 230px; overflow-y: auto; white-space: pre-wrap;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -323,15 +317,15 @@ button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
   position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
   width: 26px; height: 26px; border-radius: 50%;
   display: grid; place-items: center; font-size: 12.5px; font-weight: 800;
-  background: #24292d; color: var(--dim); transition: all .25s;
+  background: #2b2b3d; color: var(--dim); transition: all .25s;
 }
 .steps li.run { border-color: var(--acc); background: var(--acc-soft); }
-.steps li.run::before { background: var(--acc); color: #101314; animation: pulse 1.2s infinite; }
-.steps li.done { border-color: rgba(179, 199, 154, .5); }
-.steps li.done::before { content: "✓"; background: var(--ok); color: #101314; }
+.steps li.run::before { background: var(--acc); color: #fff; animation: pulse 1.2s infinite; }
+.steps li.done { border-color: rgba(52, 211, 153, .5); }
+.steps li.done::before { content: "✓"; background: var(--ok); color: #06281c; }
 .steps li.fail { border-color: var(--err); }
 .steps li.fail::before { content: "!"; background: var(--err); color: #fff; }
-@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(232, 241, 246, .18); } }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, .18); } }
 
 /* ============ MISC ============ */
 .hint { font-size: 13px; color: var(--dim); margin-top: 10px; line-height: 1.8; }
@@ -350,7 +344,7 @@ button:focus-visible, .tab-btn:focus-visible, .icon-btn:focus-visible,
 #blurPrev { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; background: #000; }
 .bregion {
   position: absolute; border: 2px solid var(--acc2);
-  background: rgba(200, 154, 171, .22); cursor: move; touch-action: none; box-sizing: border-box;
+  background: rgba(236, 72, 153, .22); cursor: move; touch-action: none; box-sizing: border-box;
   border-radius: 6px;
 }
 /* Enlarged grab handle. Center preserved (28px at -12px has the same
@@ -423,67 +417,8 @@ details.rc-sect > .sect-body { padding: 0 12px 12px; }
   margin-top: 4px; min-height: 16px;
 }
 
-
-/* ============ TOASTS + CONFIRM DIALOG (Gothic) ============ */
-#nova-toasts {
-  position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
-  z-index: 9998; display: flex; flex-direction: column; gap: 10px;
-  width: min(92vw, 480px); pointer-events: none;
-}
-.nova-toast {
-  pointer-events: auto; display: flex; gap: 12px; align-items: flex-start;
-  background: var(--card); border: 1px solid var(--line);
-  border-left: 4px solid var(--dim); border-radius: 14px;
-  padding: 13px 14px; box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
-  font-size: 14.5px; line-height: 1.65; color: var(--txt);
-  animation: toastIn .3s ease both; transition: opacity .3s, transform .3s;
-}
-.nova-toast.out { opacity: 0; transform: translateY(-6px); }
-.nova-toast .nt-ico {
-  flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%;
-  display: grid; place-items: center; font-size: 14px; font-weight: 900;
-  background: var(--surface2); color: var(--txt); margin-top: 1px;
-}
-.nova-toast.success { border-left-color: var(--ok); }
-.nova-toast.success .nt-ico { background: var(--ok); color: #101314; }
-.nova-toast.error { border-left-color: var(--err); }
-.nova-toast.error .nt-ico { background: var(--err); color: #101314; }
-.nova-toast.warn { border-left-color: var(--warn); }
-.nova-toast.warn .nt-ico { background: var(--warn); color: #101314; }
-.nova-toast.info { border-left-color: var(--info); }
-.nova-toast.info .nt-ico { background: var(--info); color: #101314; }
-.nova-toast .nt-msg { flex: 1; white-space: pre-line; word-break: break-word; }
-.nova-toast .nt-x {
-  flex: 0 0 auto; width: auto; min-height: 0; margin: 0; padding: 2px 7px;
-  background: transparent; border: 0; box-shadow: none; color: var(--dim);
-  font-size: 17px; font-weight: 700; line-height: 1;
-}
-@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
-.nova-dialog-overlay {
-  position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
-  background: rgba(5, 7, 8, .72); backdrop-filter: blur(3px); padding: 18px;
-}
-.nova-dialog {
-  background: var(--card); border: 1px solid var(--line); border-radius: 18px;
-  width: 100%; max-width: 440px; padding: 20px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, .6); animation: fadeUp .25s ease both;
-}
-.nova-dialog h3 { margin: 0 0 8px; font-size: 17px; }
-.nova-dialog .nd-msg { white-space: pre-line; color: var(--dim); font-size: 14.5px; line-height: 1.7; }
-.nova-dialog .btn-row { margin-top: 6px; }
-.nova-dialog button.danger { background: #c6a6a2; color: #101314; box-shadow: none; }
-
 /* error box injected by inline script */
-#js-errbox {
-  position: fixed; left: 12px; right: 12px; bottom: calc(var(--nav-h) + 14px);
-  z-index: 9997; background: var(--card); color: var(--txt);
-  border: 1px solid var(--line); border-left: 4px solid var(--err);
-  border-radius: 14px; padding: 12px 14px; font-size: 13px; line-height: 1.6;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .55); max-height: 35vh; overflow: auto;
-}
-#js-errbox .je-head { display: flex; justify-content: space-between; align-items: center; font-weight: 800; margin-bottom: 4px; }
-#js-errbox .je-x { width: auto; min-height: 0; margin: 0; padding: 2px 8px; background: transparent; box-shadow: none; color: var(--dim); font-size: 16px; }
-#js-errbox pre { margin: 0; white-space: pre-wrap; color: var(--dim); font-size: 11.5px; }
+#js-errbox { border-top: 2px solid var(--err); }
 
 /* Hover states only on devices that really hover — avoids sticky
    hover styles on Android after tapping a button. */
@@ -946,15 +881,14 @@ function __showErr(m) {
   if (!d) {
     d = document.createElement("div");
     d.id = "js-errbox";
-    d.innerHTML = '<div class="je-head"><span>⚠️ တစ်ခုခု မှားသွားပါတယ်</span><button class="je-x" aria-label="close">✕</button></div><div style="color:var(--dim);font-size:12.5px;margin-bottom:6px">App ကို refresh လုပ်ပြီး ပြန်စမ်းကြည့်ပါ။ ပြဿနာ ဆက်ဖြစ်နေရင် အောက်က အသေးစိတ်ကို copy ယူထားပါ။</div><pre></pre>';
-    d.querySelector(".je-x").addEventListener("click", function () { d.remove(); window.__errs = []; });
+    d.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#7f1d1d;color:#fff;padding:10px;font-size:12px;z-index:9999;max-height:35vh;overflow:auto;white-space:pre-wrap;";
     document.body.appendChild(d);
   }
-  d.querySelector("pre").textContent = window.__errs.join("\n");
+  d.textContent = window.__errs.join("\n");
 }
 window.addEventListener("error", function (e) { __showErr("JS Error: " + (e.message || e.error) + " @ " + (e.filename || "?") + ":" + (e.lineno || "?")); });
 window.addEventListener("unhandledrejection", function (e) { __showErr("Promise: " + ((e.reason && e.reason.message) || e.reason)); });
 </script>
-<script type="module" src="app-v3.js?v=20261108gothic"></script>
+<script type="module" src="app-v3.js?v=20261029a"></script>
 </body>
 </html>
