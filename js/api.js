@@ -577,6 +577,15 @@ const RECAP_VISION_SYSTEM = [
 ].join("\n");
 
 /** Multimodal recap: scene frames + transcript. frames = [{at, b64}]. */
+/** Narration-style override for the fallback script paths (the full-video
+ * path takes style directly). Story is the built-in default of both
+ * fallback system prompts, so only other styles need the hint. */
+function styleHint(style) {
+  if (!style || style === "story") return "";
+  const block = RECAP_STYLES[style];
+  return block ? "\n\nNARRATION STYLE — follow this style:\n" + block : "";
+}
+
 export async function geminiRecapScriptVision(frames, transcriptText, extraPrompt="", opts={}) {
   const targetMin = opts.targetMinutes;
   const durHint = targetMin
@@ -592,7 +601,7 @@ export async function geminiRecapScriptVision(frames, transcriptText, extraPromp
         parts.push({ inlineData: { mimeType: "image/jpeg", data: f.b64 } });
       }
       parts.push({ text: "AUDIO TRANSCRIPT (with timestamps):\n" + transcriptText +
-        "\n\nNow watch the scenes above in story order and write the recap narration." + extraPrompt + durHint });
+        "\n\nNow watch the scenes above in story order and write the recap narration." + extraPrompt + styleHint(opts.style) + durHint });
       const text = await geminiGenerateParts(m, RECAP_VISION_SYSTEM, parts, 8192);
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
       if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));
@@ -669,7 +678,7 @@ export async function geminiRecapScript(transcriptText, extraPrompt="", opts={})
     try {
       const text = await geminiGenerate(
         m, RECAP_SYSTEM,
-        "Write the recap narration for this transcript:\n\n" + transcriptText + extraPrompt + durHint
+        "Write the recap narration for this transcript:\n\n" + transcriptText + extraPrompt + styleHint(opts.style) + durHint
       );
       const { segments: segs, errors: segErrs } = parseRecapSegmentsStrict(text);
       if (segErrs.length) throw new Error("Timestamp အမှား:\n" + segErrs.slice(0, 5).join("\n"));

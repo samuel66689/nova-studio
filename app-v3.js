@@ -1,7 +1,7 @@
 // app.js — Nova Studio UI wiring (3 tabs). All compute runs in this browser.
 import { ensureFFmpeg, fetchFile, setProgressHandler, ffmpegMode } from "./js/ffmpeg.js?v=20261027a";
 import { edgeTTS, previewWithWebSpeech } from "./js/tts.js?v=20261021a";
-import { canvasExport, canvasRecapSync, canvasRecapSyncB, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261027a";
+import { canvasExport, canvasRecapSync, canvasRecapSyncB, getOutDims, BITRATE, patchMp4Duration } from "./js/canvas-export.js?v=20261109a";
 
 
 // ============ Nova Notify — Astryx Gothic themed toasts + confirm dialog ============
@@ -185,7 +185,7 @@ import {
   extractSceneFrames,
   segmentsToSRT, buildOutputTimeline, mediaDuration, fmtClock, pad2,
   geminiText, extractStoryMemory, validateRecapSegments,
-} from "./js/api.js?v=20261021a";
+} from "./js/api.js?v=20261109a";
 
 // ---------- tiny helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -388,19 +388,33 @@ async function serverEdgeTTS(text, voice) {
 // ============================================================
 // TAB 1 — NOVA CUT
 // ============================================================
+// Shared FFmpeg job guard: Cut / Recap / Sync-only all use ONE ffmpeg
+// instance and ONE in-memory filesystem (input.mp4, audio.mp3, ...).
+// Two jobs at once corrupt each other (overwritten/deleted inputs), so
+// jobs are serialized — the second tool asks the user to wait.
+let ffJobBusy = false;
+function ffJobStart() {
+  if (ffJobBusy) { novaNotify("နောက် tool တစ်ခု process လုပ်နေပါတယ် — ပြီးအောင် စောင့်ပြီးမှ ပြန်စမ်းပါ", "warn"); return false; }
+  ffJobBusy = true; return true;
+}
+function ffJobEnd() { ffJobBusy = false; }
+
 let cutFile = null;
 $("cutFile").addEventListener("change", async (e) => {
   cutFile = e.target.files[0] || null;
   $("cutResults").innerHTML = "";
   $("downloadAll").style.display = "none";
   if (!cutFile) { $("cutFileInfo").textContent = ""; return; }
-  $("cutFileInfo").textContent = cutFile.name + " (" + fmtSize(cutFile.size) + ") — duration ဖတ်နေပါတယ်…";
+  const f = cutFile; // capture: a newer selection must not receive this file's duration
+  $("cutFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ") — duration ဖတ်နေပါတယ်…";
   try {
-    const d = await mediaDuration(cutFile);
-    $("cutFileInfo").textContent = cutFile.name + " (" + fmtSize(cutFile.size) + ", " + fmtClock(d) + " ကြာတယ်)";
-    cutFile._dur = d;
+    const d = await mediaDuration(f);
+    if (cutFile !== f) return; // superseded while reading
+    $("cutFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ", " + fmtClock(d) + " ကြာတယ်)";
+    f._dur = d;
   } catch (err) {
-    $("cutFileInfo").textContent = cutFile.name + " (" + fmtSize(cutFile.size) + ")";
+    if (cutFile !== f) return;
+    $("cutFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ")";
   }
 });
 
@@ -413,6 +427,7 @@ $("startCut").addEventListener("click", async () => {
   $("cutResults").innerHTML = "";
   $("downloadAll").style.display = "none";
   const anchors = [];
+  if (!ffJobStart()) { setBusy(["startCut", "downloadAll"], false); return; }
   try {
     log("cut", "FFmpeg ပြင်ဆင်နေပါတယ်…");
     const ff = await ensureFFmpeg((m, c) => log("cut", m, c));
@@ -421,6 +436,7 @@ $("startCut").addEventListener("click", async () => {
     const total = Math.ceil(duration / partSec);
     log("cut", `စုစုပေါင်း ${total} ပိုင်း ဖြတ်ပါမယ် (${minutes} မိနစ်စီ)`, "ok");
 
+    let failedParts = 0;
     setProgressHandler((p) => setProgress("cut", (p * 100) / total + (0), `အပိုင်း ${1}/${total}…`));
     await ff.writeFile("input.mp4", await fetchFile(cutFile));
 
@@ -431,8 +447,17 @@ $("startCut").addEventListener("click", async () => {
       setProgressHandler((p) => setProgress("cut",
         ((i + p) / total) * 100, `အပိုင်း ${i + 1}/${total} ဖြတ်နေပါတယ်…`));
       log("cut", `အပိုင်း ${i + 1}/${total} (${fmtClock(start)} → ${fmtClock(start + dur)})…`);
-      await ff.exec(["-ss", start.toFixed(2), "-t", dur.toFixed(2),
+      // ff.exec resolves with the exit code (it does not throw): a
+      // nonzero code (e.g. VP8 WebM cannot stream-copy into MP4) must
+      // not be published as a successful part.
+      const exitCode = await ff.exec(["-ss", start.toFixed(2), "-t", dur.toFixed(2),
         "-i", "input.mp4", "-c", "copy", outName]);
+      if (exitCode !== 0) {
+        failedParts++;
+        log("cut", `အပိုင်း ${i + 1} မအောင်မြင်ပါ (ffmpeg exit ${exitCode}) — ဒီ file format ကို MP4 အဖြစ် တိုက်ရိုက် copy လို့ မရနိုင်ပါ`, "err");
+        try { await ff.deleteFile(outName); } catch (_) {}
+        continue;
+      }
       const data = await ff.readFile(outName);
       await ff.deleteFile(outName);
       const blob = new Blob([data], { type: "video/mp4" });
@@ -443,6 +468,10 @@ $("startCut").addEventListener("click", async () => {
       log("cut", `အပိုင်း ${i + 1} ပြီးပါပြီ ✅`, "ok");
     }
     await ff.deleteFile("input.mp4");
+    if (failedParts) {
+      log("cut", `⚠️ ${failedParts}/${total} ပိုင်း မအောင်မြင်ခဲ့ပါ`, "err");
+      if (!anchors.length) throw new Error("ဘယ်အပိုင်းမှ ဖြတ်မရခဲ့ပါ — file format ကို စစ်ပါ (WebM ဆိုရင် MP4 အရင် ပြောင်းပါ)");
+    }
     setProgress("cut", 100, "ပြီးပါပြီ ✅ — download ခလုတ်နှိပ်ရင် ချက်ချင်း save ချမှာပါ");
     log("cut", `အားလုံးပြီးပါပြီ (${total} ပိုင်း) 🎉`, "ok");
     if (anchors.length > 1) $("downloadAll").style.display = "";
@@ -455,6 +484,7 @@ $("startCut").addEventListener("click", async () => {
   } finally {
     setProgressHandler(null);
     setBusy(["startCut", "downloadAll"], false);
+    ffJobEnd();
   }
 });
 
@@ -1332,12 +1362,14 @@ async function applyPresetSettings(settings) {
       rcLogoImageId = settings.logoImageId;
     } catch (e) {
       // Clear logo but don't fail the whole preset
-      rcLogoImg = null; rcLogoImageId = null;
+      rcLogoImg = null; rcLogoImageId = null; rcLogoBlob = null;
       const w = $("rcLogoWrap"); if (w) w.style.display = "none";
       throw e;
     }
   } else {
-    rcLogoImg = null; rcLogoImageId = null;
+    // Clear the blob too: leaving it set made a later preset update
+    // re-save (and resurrect) a logo this preset removed.
+    rcLogoImg = null; rcLogoImageId = null; rcLogoBlob = null;
     const w = $("rcLogoWrap"); if (w) w.style.display = "none";
   }
   // Refresh layout
@@ -1452,7 +1484,7 @@ async function updatePreset(id, updates) {
   const p = await getPreset(id);
   if (!p) throw new Error("Preset မတွေ့ပါ");
   if (updates.name !== undefined) p.name = updates.name.trim() || p.name;
-  if (updates.seriesTitle !== undefined) p.seriesTitle = updates.seriesTitle.trim() || null;
+  if (updates.seriesTitle !== undefined) p.seriesTitle = (updates.seriesTitle || "").trim() || null; // was: .trim() on possibly-null -> TypeError, update never saved
   if (updates.settings !== undefined) p.settings = updates.settings;
   p.updatedAt = Date.now();
   await idbSet(id, p);
@@ -1831,6 +1863,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   setBusy(["rcSyncOnly", "startRecap"], true);
   const { segments, segPieces, baseName } = rcLastRun;
   setStep("mux", "run");
+  if (!ffJobStart()) { setBusy(["rcSyncOnly", "startRecap"], false); return; }
   try {
     acquireWakeLock().catch(() => {});
     log("rc", "🔄 Sync ပြန်လုပ်နေပါတယ်… (TTS skip)");
@@ -1908,6 +1941,7 @@ $("rcSyncOnly")?.addEventListener("click", async () => {
   } finally {
     releaseWakeLock();
     setBusy(["rcSyncOnly", "startRecap"], false);
+    ffJobEnd();
   }
 });
 
@@ -1916,13 +1950,16 @@ $("rcFile").addEventListener("change", async (e) => {
   $("rcResults").innerHTML = "";
   rcShowBlurPreview();
   if (!rcFile) { $("rcFileInfo").textContent = ""; return; }
-  $("rcFileInfo").textContent = rcFile.name + " (" + fmtSize(rcFile.size) + ") — duration ဖတ်နေပါတယ်…";
+  const f = rcFile; // capture: a newer selection must not receive this file's duration
+  $("rcFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ") — duration ဖတ်နေပါတယ်…";
   try {
-    const d = await mediaDuration(rcFile);
-    $("rcFileInfo").textContent = rcFile.name + " (" + fmtSize(rcFile.size) + ", " + fmtClock(d) + " ကြာတယ်)";
-    rcFile._dur = d;
+    const d = await mediaDuration(f);
+    if (rcFile !== f) return; // superseded while reading
+    $("rcFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ", " + fmtClock(d) + " ကြာတယ်)";
+    f._dur = d;
   } catch (err) {
-    $("rcFileInfo").textContent = rcFile.name + " (" + fmtSize(rcFile.size) + ")";
+    if (rcFile !== f) return;
+    $("rcFileInfo").textContent = f.name + " (" + fmtSize(f.size) + ")";
   }
 });
 
@@ -1938,6 +1975,7 @@ $("rcFile").addEventListener("change", async (e) => {
       if (saved.transcript) { try { $("rcTranscript").value = saved.transcript; } catch (_) {} }
       if (saved.script) { try { $("rcScript").value = saved.script; } catch (_) {} }
       const bar = document.createElement("div");
+      bar.id = "rcResumeBar";
       bar.style.cssText = "background:#1a3a2a;border:1px solid #4caf50;border-radius:8px;padding:12px;margin:8px 0;";
       bar.innerHTML = `<div>💾 <b>သိမ်းထားတာ ရှိတယ်</b> (${saved.segments.length} segments, ${new Date(saved.savedAt).toLocaleString()})</div>
         <div style="margin-top:8px;display:flex;gap:8px;">
@@ -1961,7 +1999,10 @@ $("rcFile").addEventListener("change", async (e) => {
         log("rc", "📂 ပြန်လည်ရယူပြီးပြီ — video ရွေးပြီး '🔄 Sync ပြန်လုပ်' နှိပ်ပါ", "ok");
       };
       $("rcDiscardBtn").onclick = async () => {
-        await idbDel("rc-last");
+        // Delete only the record this banner was shown for: a newer run
+        // may have replaced "rc-last" since, and its audio must stay.
+        const cur = await idbGet("rc-last").catch(() => null);
+        if (!cur || cur.savedAt === saved.savedAt) await idbDel("rc-last");
         bar.remove();
       };
     }
@@ -2021,9 +2062,14 @@ $("previewVoice").addEventListener("click", async () => {
 $("startRecap").addEventListener("click", async () => {
   revokeUrls("recap");
   rcLastRun = null; // Fix #9: clear previous run to avoid mixing old audio with new video
+  { const staleBar = document.getElementById("rcResumeBar"); if (staleBar) staleBar.remove(); }
   if (!rcFile) { novaNotify("Video file အရင်ရွေးပါ", "warn"); return; }
+  // Capture the file for the whole run: changing the picker mid-run
+  // must not swap another video under this run's narration/recovery.
+  const runFile = rcFile;
   const sv = validateSeriesInputs();
   if (!sv.ok) { novaNotify(sv.error, "error"); log("rc", "❌ " + sv.error, "err"); return; }
+  if (!ffJobStart()) return;
   acquireWakeLock();
   const lang = $("rcLang").value;
   const voice = $("rcVoice").value;
@@ -2033,7 +2079,7 @@ $("startRecap").addEventListener("click", async () => {
   $("rcTranscript").value = "";
   $("rcScript").value = "";
   resetSteps();
-  const baseName = rcFile.name.replace(/\.[^.]+$/, "");
+  const baseName = runFile.name.replace(/\.[^.]+$/, "");
 
   try {
     log("rc", "FFmpeg ပြင်ဆင်နေပါတယ်…");
@@ -2043,7 +2089,7 @@ $("startRecap").addEventListener("click", async () => {
     setStep("audio", "run");
     setProgressHandler((p) => setProgress("rc", p * 30, "အသံခွဲထုတ်နေပါတယ်…"));
     log("rc", "1️⃣ အသံခွဲထုတ်နေပါတယ်…");
-    await ff.writeFile("input.mp4", await fetchFile(rcFile));
+    await ff.writeFile("input.mp4", await fetchFile(runFile));
     await ff.exec(["-i", "input.mp4", "-vn", "-acodec", "libmp3lame", "-q:a", "2", "audio.mp3"]);
     const audioData = await ff.readFile("audio.mp3");
     const audioBlob = new Blob([audioData], { type: "audio/mpeg" });
@@ -2128,8 +2174,8 @@ $("startRecap").addEventListener("click", async () => {
     let watchMode = ($("rcWatchMode") || {}).value || "frames";
     // Full-video upload caps at 100MB on the server — fall back to frames
     // BEFORE uploading, instead of failing after a long upload.
-    if (watchMode === "fullvideo" && rcFile && rcFile.size > 100 * 1024 * 1024) {
-      log("rc", `⚠️ Video က ${(rcFile.size / 1048576).toFixed(0)}MB — full-video mode က 100MB အထိပဲ တင်လို့ရပါတယ်, frames mode နဲ့ အလိုအလျောက် ဆက်လုပ်ပါမယ်…`, "err");
+    if (watchMode === "fullvideo" && runFile && runFile.size > 100 * 1024 * 1024) {
+      log("rc", `⚠️ Video က ${(runFile.size / 1048576).toFixed(0)}MB — full-video mode က 100MB အထိပဲ တင်လို့ရပါတယ်, frames mode နဲ့ အလိုအလျောက် ဆက်လုပ်ပါမယ်…`, "err");
       watchMode = "frames";
     }
     let segments = null;
@@ -2138,12 +2184,12 @@ $("startRecap").addEventListener("click", async () => {
       try {
         setProgress("rc", 52, "Video တင်နေပါတယ် (Gemini)…");
         log("rc", "3️⃣ Video အပြည့်တင်ပြီး AI ကြည့်နေပါတယ်… 🎬");
-        const fileUri = await geminiUploadVideo(rcFile, (i) =>
+        const fileUri = await geminiUploadVideo(runFile, (i) =>
           setProgress("rc", 52 + Math.min(i, 10), `video process စောင့်နေပါတယ်…`));
         setProgress("rc", 62, "AI က video ကြည့်ပြီး script ရေးနေပါတယ်…");
         log("rc", `🎬 video အပြည့် + style (${rcStyle}) နဲ့ script ရေးနေပါတယ်…`);
         {
-        const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+        const srcMin = (runFile && runFile._dur ? runFile._dur : 480) / 60;
         const tgtMin = getDurationTarget().targetMin;
         log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်၏ ${getDurationTarget().pct}%) [full-video] — ခန့်မှန်းခြေသာ`);
         segments = await geminiRecapFromVideoFile(fileUri, rcStyle, seriesPromptExtra(), { targetMinutes: tgtMin });
@@ -2158,16 +2204,16 @@ $("startRecap").addEventListener("click", async () => {
       try {
         setProgress("rc", 52, "Scene frames ထုတ်နေပါတယ်…");
         log("rc", "3️⃣ AI က scene တွေကြည့်နေပါတယ်… 🎬");
-        const frames = await extractSceneFrames(rcFile, 40, (i, n) =>
+        const frames = await extractSceneFrames(runFile, 40, (i, n) =>
           setProgress("rc", 52 + (i / Math.max(1, n)) * 4, `scene ထုတ်နေပါတယ်… (${i}/${n})`));
         if (frames.length >= 4) {
           setProgress("rc", 57, "AI က scene တွေကြည့်ပြီး script ရေးနေပါတယ်…");
           log("rc", `🎬 scene ${frames.length} ကွက် + transcript နဲ့ script ရေးနေပါတယ်…`);
           {
-          const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+          const srcMin = (runFile && runFile._dur ? runFile._dur : 480) / 60;
           const tgtMin = getDurationTarget().targetMin;
           log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်၏ ${getDurationTarget().pct}%) [vision] — ခန့်မှန်းခြေသာ`);
-          segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
+          segments = await geminiRecapScriptVision(frames, transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin, style: rcStyle });
         }
           log("rc", `scene-ကြည့်ပြီး script ရပါပြီ (${segments.length} segments) ✅`, "ok");
         } else {
@@ -2181,10 +2227,10 @@ $("startRecap").addEventListener("click", async () => {
       setProgress("rc", 58, "Recap script ရေးနေပါတယ် (Gemini)…");
       log("rc", "3️⃣ Gemini က recap script ရေးနေပါတယ်…");
       {
-        const srcMin = (rcFile && rcFile._dur ? rcFile._dur : 480) / 60;
+        const srcMin = (runFile && runFile._dur ? runFile._dur : 480) / 60;
         const tgtMin = getDurationTarget().targetMin;
         log("rc", `🎯 Target: ~${tgtMin} မိနစ် (မူရင်း ${Math.round(srcMin)} မိနစ်၏ ${getDurationTarget().pct}%) — ခန့်မှန်းခြေသာ`);
-        segments = await geminiRecapScript(transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin });
+        segments = await geminiRecapScript(transcriptText, seriesPromptExtra(), { targetMinutes: tgtMin, style: rcStyle });
       }
     }
     $("rcScript").value = segments.map((s) => {
@@ -2206,7 +2252,7 @@ $("startRecap").addEventListener("click", async () => {
     log("rc", `script ရပါပြီ (${segments.length} segments) ✅`, "ok");
     // PRIORITY 1: Validate BEFORE TTS to avoid wasting API credits
     {
-      const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+      const srcDur = (typeof runFile !== "undefined" && runFile && runFile._dur) || 0;
       const v = validateRecapSegments(segments, { sourceDuration: srcDur });
       if (!v.ok) {
         const msg = "Script အမှား (TTS မလုပ်ခင်):\n" + v.errors.slice(0, 5).join("\n");
@@ -2451,18 +2497,19 @@ $("startRecap").addEventListener("click", async () => {
     try {
       await idbSet("rc-last", {
         segments, segPieces, baseName,
-        fileName: rcFile.name, fileSize: rcFile.size,
+        fileName: runFile.name, fileSize: runFile.size,
         savedAt: Date.now(),
         transcript: $("rcTranscript").value,
         script: $("rcScript").value,
       });
+      { const staleBar = document.getElementById("rcResumeBar"); if (staleBar) staleBar.remove(); }
       log("rc", "💾 သိမ်းပြီးပြီ — refresh လုပ်လည်း ပြန်စရာ မလို", "ok");
     } catch (e) {
       console.warn("idb save failed", e);
     }
 
     // ---- step 5: sync ----
-    rcLastRun = { segments, segPieces, baseName, fileName: rcFile.name, fileSize: rcFile.size };
+    rcLastRun = { segments, segPieces, baseName, fileName: runFile.name, fileSize: runFile.size };
     // Canvas audio-first: video adjusts to narration per segment
     setStep("mux", "run");
     setProgress("rc", 90, "🎯 Audio-first sync လုပ်နေပါတယ် (canvas)…");
@@ -2488,7 +2535,7 @@ $("startRecap").addEventListener("click", async () => {
     // but ONLY applies to genuine sourceStart/sourceEnd fields — output
     // timestamps are never compared against source duration.
     {
-      const srcDur = (typeof rcFile !== "undefined" && rcFile && rcFile._dur) || 0;
+      const srcDur = (typeof runFile !== "undefined" && runFile && runFile._dur) || 0;
       const v = validateRecapSegments(segsWithAudio, { sourceDuration: srcDur });
       if (!v.ok) {
         const msg = "Timestamp အမှား:\n" + v.errors.slice(0, 5).join("\n");
@@ -2498,7 +2545,7 @@ $("startRecap").addEventListener("click", async () => {
     }
     const syncMethod = getSyncMethod();
     if (syncMethod === "B") log("rc", "🧪 Sync Method B (Audio Master Timeline) နဲ့ လုပ်နေပါတယ်…");
-    let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(rcFile, segsWithAudio, {
+    let { blob: finalBlob, ext, duration: recDur, recSec } = await (syncMethod === "B" ? canvasRecapSyncB : canvasRecapSync)(runFile, segsWithAudio, {
       flip: wantFlip,
       watermarkText: wantWm,
       blurRegions: rcBlurRegions,
@@ -2545,5 +2592,6 @@ $("startRecap").addEventListener("click", async () => {
     setProgressHandler(null);
     setBusy(["startRecap"], false);
     releaseWakeLock();
+    ffJobEnd();
   }
 });

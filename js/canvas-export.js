@@ -501,6 +501,12 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
     // source-video position. (Phase 3 will add proper scene matching.)
     // Seek: register listener BEFORE setting currentTime (avoid race).
     const hasSrc = typeof s.sourceStart === "number" && isFinite(s.sourceStart) && s.sourceStart >= 0;
+    // SRT sync: the recorder runs in real time, but SRT timing is built
+    // from audio durations only — a seek wait recorded here becomes a
+    // silent gap in the video and every later cue drifts early. Pause
+    // the recorder across the seek so the recorded timeline matches
+    // the audio timeline. (Unsupported pause() just falls back.)
+    if (hasSrc) { try { if (rec.state === "recording") rec.pause(); } catch (_) {} }
     if (hasSrc) {
       const target = s.sourceStart;
       // Already at target? No seek needed — continue immediately.
@@ -538,6 +544,7 @@ export async function canvasRecapSync(videoBlob, segments, opts = {}) {
       } catch (_) {}
     }
 
+    try { if (rec.state === "paused") rec.resume(); } catch (_) {}
     // Play audio
     const audioDone = new Promise((res) => {
       s.audioEl.onended = res;
